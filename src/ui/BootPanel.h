@@ -4,5 +4,5 @@
 
 namespace rhv::ui
 {
-void DrawBootPanel(const models::BootTelemetry& telemetry);
+void DrawBootStatusBlock(const models::BootTelemetry& telemetry, bool includeScopeNote = false);
 }  // namespace rhv::ui

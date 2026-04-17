@@ -1,6 +1,8 @@
 #include "app/Application.h"
 
-#include "ui/BootPanel.h"
+#include "ui/HybridScreen.h"
+#include "ui/ScreenEffects.h"
+#include "ui/Theme.h"
 
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -121,6 +123,7 @@ bool Application::InitializeImGui()
     io.IniFilename = nullptr;
 
     ImGui::StyleColorsDark();
+    ui::ApplyTerminalBaseStyle();
 
     if (!ImGui_ImplGlfw_InitForOpenGL(window_, true))
     {
@@ -149,16 +152,21 @@ void Application::RenderFrame()
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    ui::DrawBootPanel(BuildBootTelemetry());
+    const models::FrameVisualState frameState = BuildFrameVisualState();
+
+    ui::DrawHybridScreen(BuildBootTelemetry(frameState), frameState);
+    ui::DrawScreenEffectsOverlay(frameState);
 
     ImGui::Render();
 
-    int framebufferWidth = 0;
-    int framebufferHeight = 0;
-    glfwGetFramebufferSize(window_, &framebufferWidth, &framebufferHeight);
+    glViewport(0, 0, frameState.framebufferWidth, frameState.framebufferHeight);
 
-    glViewport(0, 0, framebufferWidth, framebufferHeight);
-    glClearColor(0.03f, 0.04f, 0.05f, 1.0f);
+    const ui::Palette& terminalPalette = ui::GetPalette(ui::ThemeMode::TerminalBase);
+    glClearColor(
+        terminalPalette.viewportBackground.x,
+        terminalPalette.viewportBackground.y,
+        terminalPalette.viewportBackground.z,
+        terminalPalette.viewportBackground.w);
     glClear(GL_COLOR_BUFFER_BIT);
 
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -201,22 +209,30 @@ double Application::GetUptimeSeconds() const
     return Seconds(std::chrono::steady_clock::now() - bootTime_).count();
 }
 
-models::BootTelemetry Application::BuildBootTelemetry() const
+models::FrameVisualState Application::BuildFrameVisualState() const
 {
-    int framebufferWidth = 0;
-    int framebufferHeight = 0;
-    glfwGetFramebufferSize(window_, &framebufferWidth, &framebufferHeight);
+    models::FrameVisualState frameState{};
+    glfwGetFramebufferSize(window_, &frameState.framebufferWidth, &frameState.framebufferHeight);
+    frameState.uptimeSeconds = GetUptimeSeconds();
+    frameState.frameIndex = frameIndex_;
+    frameState.isWindowFocused = glfwGetWindowAttrib(window_, GLFW_FOCUSED) != 0;
 
+    return frameState;
+}
+
+models::BootTelemetry Application::BuildBootTelemetry(
+    const models::FrameVisualState& frameState) const
+{
     models::BootTelemetry telemetry{};
     telemetry.applicationTitle = config_.windowTitle;
     telemetry.bootState = "BOOT OK";
-    telemetry.displayState = glfwGetWindowAttrib(window_, GLFW_FOCUSED) ? "ACTIVE" : "STANDBY";
+    telemetry.displayState = frameState.isWindowFocused ? "ACTIVE" : "STANDBY";
     telemetry.graphicsBackend = "OPENGL 3.3 CORE";
     telemetry.uiBackend = "DEAR IMGUI";
-    telemetry.framebufferWidth = framebufferWidth;
-    telemetry.framebufferHeight = framebufferHeight;
-    telemetry.uptimeSeconds = GetUptimeSeconds();
-    telemetry.frameIndex = frameIndex_;
+    telemetry.framebufferWidth = frameState.framebufferWidth;
+    telemetry.framebufferHeight = frameState.framebufferHeight;
+    telemetry.uptimeSeconds = frameState.uptimeSeconds;
+    telemetry.frameIndex = frameState.frameIndex;
 
     return telemetry;
 }

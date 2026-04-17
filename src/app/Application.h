@@ -1,6 +1,7 @@
 #pragma once
 
 #include "models/BootTelemetry.h"
+#include "models/FrameVisualState.h"
 
 #include <chrono>
 #include <cstdint>
@@ -42,7 +43,9 @@ private:
     void SetError(std::string message);
 
     [[nodiscard]] double GetUptimeSeconds() const;
-    [[nodiscard]] models::BootTelemetry BuildBootTelemetry() const;
+    [[nodiscard]] models::FrameVisualState BuildFrameVisualState() const;
+    [[nodiscard]] models::BootTelemetry BuildBootTelemetry(
+        const models::FrameVisualState& frameState) const;
 
     AppConfig config_{};
     GLFWwindow* window_ = nullptr;

@@ -1,36 +1,44 @@
 #include "ui/BootPanel.h"
+#include "ui/Theme.h"
 
 #include <imgui.h>
 
+#include <string>
+
 namespace rhv::ui
 {
-void DrawBootPanel(const models::BootTelemetry& telemetry)
+void DrawBootStatusBlock(const models::BootTelemetry& telemetry, const bool includeScopeNote)
 {
-    ImGui::SetNextWindowPos(ImVec2(24.0f, 24.0f), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowSize(ImVec2(460.0f, 280.0f), ImGuiCond_FirstUseEver);
+    const Palette& palette = GetPalette(ThemeMode::TerminalBase);
 
-    constexpr ImGuiWindowFlags panelFlags =
-        ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoSavedSettings;
+    ImGui::PushStyleColor(ImGuiCol_Text, palette.headerText);
+    ImGui::TextUnformatted(telemetry.applicationTitle.c_str());
+    ImGui::PopStyleColor();
+    ImGui::Dummy(ImVec2(0.0f, 2.0f));
 
-    if (ImGui::Begin("BOOT STATUS", nullptr, panelFlags))
+    DrawStatusRow("MODEL STATE", telemetry.bootState, palette.activeText, 124.0f);
+    DrawStatusRow("DISPLAY LINK", telemetry.displayState, palette.bodyText, 124.0f);
+    DrawStatusRow("GRAPHICS STACK", telemetry.graphicsBackend, palette.structuralText, 124.0f);
+    DrawStatusRow("UI STACK", telemetry.uiBackend, palette.structuralText, 124.0f);
+
+    const std::string framebufferLabel =
+        std::to_string(telemetry.framebufferWidth) + " x " +
+        std::to_string(telemetry.framebufferHeight);
+    const std::string uptimeLabel =
+        std::to_string(static_cast<int>(telemetry.uptimeSeconds * 100.0)) + " CS";
+    const std::string frameLabel = std::to_string(telemetry.frameIndex);
+
+    DrawStatusRow("FRAMEBUFFER", framebufferLabel, palette.bodyText, 124.0f);
+    DrawStatusRow("UPTIME", uptimeLabel, palette.warningText, 124.0f);
+    DrawStatusRow("FRAME ID", frameLabel, palette.bodyText, 124.0f);
+
+    if (includeScopeNote)
     {
-        ImGui::TextUnformatted(telemetry.applicationTitle.c_str());
         ImGui::Separator();
-
-        ImGui::Text("MODEL STATE    %s", telemetry.bootState.c_str());
-        ImGui::Text("DISPLAY LINK   %s", telemetry.displayState.c_str());
-        ImGui::Text("GRAPHICS STACK %s", telemetry.graphicsBackend.c_str());
-        ImGui::Text("UI STACK       %s", telemetry.uiBackend.c_str());
-        ImGui::Text("FRAMEBUFFER    %d x %d", telemetry.framebufferWidth, telemetry.framebufferHeight);
-        ImGui::Text("UPTIME         %.2f s", telemetry.uptimeSeconds);
-        ImGui::Text("FRAME ID       %llu", static_cast<unsigned long long>(telemetry.frameIndex));
-
-        ImGui::Separator();
-        ImGui::TextWrapped(
-            "Panel layout, event systems, and causal modelling are intentionally not included at this stage of implementation.");
+        DrawWrappedNote(
+            "FOUNDATION",
+            "Terminal mode remains the readable default. Panel layout, event systems, and causal modelling are intentionally deferred.",
+            ThemeMode::TerminalBase);
     }
-
-    ImGui::End();
 }
 }  // namespace rhv::ui
