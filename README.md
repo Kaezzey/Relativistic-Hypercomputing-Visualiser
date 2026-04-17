@@ -1,7 +1,9 @@
 # Relativistic Hypercomputing Visualiser
 
 This repository is being built as an educational and interactive C++ application that visualises the causal geometry behind relativistic hypercomputing thought experiments. The app should help me understand concepts like worldlines, proper time, light cones, horizons, causal reachability, and signal propagation.
-
+<p align="center">
+<img width="700" height="517" alt="sci-fi-o-rama_uibaka_011" src="https://github.com/user-attachments/assets/0e3c7f44-2c1a-4776-9f1e-2664a6c744ba" />
+</p>
 ## Prerequisites
 
 - CMake 3.24 or newer
