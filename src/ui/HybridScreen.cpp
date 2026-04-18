@@ -1,5 +1,7 @@
 #include "ui/HybridScreen.h"
 
+#include "core/OperationalStateBuilder.h"
+#include "models/OperationalState.h"
 #include "ui/BootPanel.h"
 #include "ui/HybridLayout.h"
 #include "ui/PanelFrame.h"
@@ -16,11 +18,18 @@
 namespace
 {
 using rhv::models::BootTelemetry;
+using rhv::models::EventLogEntry;
 using rhv::models::FrameVisualState;
 using rhv::ui::HybridScreenLayout;
+using rhv::models::ObserverPlaceholder;
+using rhv::models::OperationalState;
 using rhv::ui::Palette;
 using rhv::ui::PanelRect;
+using rhv::models::StatusBadge;
+using rhv::models::SymbolConvention;
+using rhv::models::SymbolGlyph;
 using rhv::ui::ThemeMode;
+using rhv::models::Tone;
 
 struct CanvasRect
 {
@@ -93,7 +102,44 @@ void DrawSquareNode(
         1.2f);
 }
 
-void DrawCausalViewPlaceholder(const FrameVisualState& frameState)
+const ImVec4& ResolveToneColor(const Palette& palette, const Tone tone)
+{
+    switch (tone)
+    {
+    case Tone::Active:
+        return palette.activeText;
+    case Tone::Warning:
+        return palette.warningText;
+    case Tone::Structural:
+        return palette.structuralText;
+    case Tone::Muted:
+        return palette.mutedText;
+    }
+
+    return palette.bodyText;
+}
+
+void DrawStatusBadge(const StatusBadge& badge)
+{
+    const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const Palette& schematicPalette = rhv::ui::GetPalette(ThemeMode::SchematicTelemetry);
+
+    if (badge.useSchematicAccent)
+    {
+        rhv::ui::DrawLabelChip(
+            badge.label.c_str(),
+            schematicPalette.accentPrimary,
+            ThemeMode::SchematicTelemetry);
+        return;
+    }
+
+    rhv::ui::DrawLabelChip(
+        badge.label.c_str(),
+        ResolveToneColor(terminalPalette, badge.tone),
+        ThemeMode::TerminalBase);
+}
+
+void DrawCausalViewPlaceholder(const FrameVisualState& frameState, const OperationalState& operationalState)
 {
     const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
     const ImVec2 canvasOrigin = ImGui::GetCursorScreenPos();
@@ -173,7 +219,7 @@ void DrawCausalViewPlaceholder(const FrameVisualState& frameState)
     drawList->AddText(
         ImVec2(rect.min.x + 14.0f, rect.min.y + 10.0f),
         rhv::ui::ToU32(palette.structuralText),
-        "CAUSAL SURFACE / PLACEHOLDER ONLY");
+        operationalState.causalViewMode.c_str());
     drawList->AddText(
         ImVec2(nodeA.x - 28.0f, nodeA.y - 22.0f),
         rhv::ui::ToU32(palette.warningText),
@@ -192,34 +238,41 @@ void DrawCausalViewPlaceholder(const FrameVisualState& frameState)
         "M1 ENABLES 2D SPACETIME");
 }
 
-void DrawCommandStripPanel(const FrameVisualState& frameState)
+void DrawCommandStripPanel(const OperationalState& operationalState)
 {
     const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
 
-    rhv::ui::DrawLabelChip("LAYOUT LOCK", palette.activeText, ThemeMode::TerminalBase);
-    ImGui::SameLine();
-    rhv::ui::DrawLabelChip("HYBRID VIEW", palette.warningText, ThemeMode::TerminalBase);
-    ImGui::SameLine();
-    rhv::ui::DrawLabelChip("CMD BUS", palette.structuralText, ThemeMode::TerminalBase);
+    for (std::size_t index = 0; index < operationalState.commandBadges.size(); ++index)
+    {
+        DrawStatusBadge(operationalState.commandBadges[index]);
+        if (index + 1U < operationalState.commandBadges.size())
+        {
+            ImGui::SameLine();
+        }
+    }
 
-    rhv::ui::DrawStatusRow("ACTIVE SCREEN", "CAUSAL + SPATIAL", palette.bodyText, 132.0f);
-    rhv::ui::DrawStatusRow("INPUT STATE", "PLACEHOLDER / 0D ARMS COMMAND FLOW", palette.structuralText, 132.0f);
-    rhv::ui::DrawStatusRow(
-        "FRAME CLOCK",
-        std::to_string(frameState.frameIndex),
-        palette.warningText,
-        132.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, palette.bodyText);
+    ImGui::TextUnformatted(operationalState.commandLine.c_str());
+    ImGui::PopStyleColor();
+
+    ImGui::PushStyleColor(ImGuiCol_Text, palette.structuralText);
+    ImGui::Text("CMD STATE  %s", operationalState.commandState.c_str());
+    ImGui::PopStyleColor();
 }
 
-void DrawCausalViewPanel(const FrameVisualState& frameState)
+void DrawCausalViewPanel(const FrameVisualState& frameState, const OperationalState& operationalState)
 {
     const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
 
+    rhv::ui::DrawStatusRow("VIEW MODE", operationalState.causalViewMode, palette.activeText, 116.0f);
+    rhv::ui::DrawStatusRow("CAUSAL STATUS", operationalState.causalStatus, palette.warningText, 116.0f);
+    rhv::ui::DrawStatusRow("VIEW LINK", operationalState.viewLinkState, palette.bodyText, 116.0f);
+
     rhv::ui::DrawWrappedNote(
-        "ROLE",
-        "This region will host the 2D causal analysis viewport. Milestone 0C locks the panel and its resize behavior only.",
+        "MODEL WARN",
+        "Milestone 0D provides terminal vocabulary and placeholder panel behavior only. Minkowski axes, events, and light-cone logic begin later.",
         ThemeMode::TerminalBase);
-    DrawCausalViewPlaceholder(frameState);
+    DrawCausalViewPlaceholder(frameState, operationalState);
 
     rhv::ui::DrawLabelChip("EVENTS", palette.activeText, ThemeMode::TerminalBase);
     ImGui::SameLine();
@@ -228,14 +281,18 @@ void DrawCausalViewPanel(const FrameVisualState& frameState)
     rhv::ui::DrawLabelChip("NULL PATHS OFFLINE", palette.warningText, ThemeMode::TerminalBase);
 }
 
-void DrawSpatialViewPanel(const FrameVisualState& frameState)
+void DrawSpatialViewPanel(const FrameVisualState& frameState, const OperationalState& operationalState)
 {
     const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
     const Palette& schematicPalette = rhv::ui::GetPalette(ThemeMode::SchematicTelemetry);
 
+    rhv::ui::DrawStatusRow("VIEW MODE", operationalState.spatialViewMode, terminalPalette.warningText, 116.0f);
+    rhv::ui::DrawStatusRow("REGION STATE", operationalState.spatialStatus, terminalPalette.structuralText, 116.0f);
+    rhv::ui::DrawStatusRow("LENS STATE", operationalState.lensState, terminalPalette.warningText, 116.0f);
+
     rhv::ui::DrawWrappedNote(
-        "ROLE",
-        "This region is reserved for the future 3D spatial and optical viewport. The insert below is a schematic placeholder, not a 3D render path.",
+        "MODEL WARN",
+        "The insert below is schematic telemetry only. It is not a 3D renderer, not a black-hole region model, and not an optical lensing simulation.",
         ThemeMode::TerminalBase);
 
     const ImVec2 canvasSize(ImGui::GetContentRegionAvail().x, std::max(ImGui::GetContentRegionAvail().y - 44.0f, 210.0f));
@@ -246,96 +303,152 @@ void DrawSpatialViewPanel(const FrameVisualState& frameState)
     rhv::ui::DrawLabelChip("3D PATH RESERVED", terminalPalette.warningText, ThemeMode::TerminalBase);
 }
 
-void DrawObserverSlot(
-    const char* observerId,
-    const char* assignmentState,
-    const char* frameStateLabel,
-    const ImVec4& idColor)
+void DrawObserverSlot(const ObserverPlaceholder& observer)
 {
     const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const ImVec4& observerColor = ResolveToneColor(palette, observer.tone);
 
-    rhv::ui::DrawLabelChip(observerId, idColor, ThemeMode::TerminalBase);
+    rhv::ui::DrawLabelChip(observer.observerId.c_str(), observerColor, ThemeMode::TerminalBase);
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Text, palette.bodyText);
-    ImGui::TextUnformatted(assignmentState);
+    ImGui::TextUnformatted(observer.assignmentState.c_str());
     ImGui::PopStyleColor();
 
-    rhv::ui::DrawStatusRow("LOCAL FRAME", frameStateLabel, palette.structuralText, 116.0f);
+    rhv::ui::DrawStatusRow("LOCAL FRAME", observer.localFrameState, palette.structuralText, 108.0f);
+    rhv::ui::DrawStatusRow("CLOCK BUS", observer.clockState, palette.warningText, 108.0f);
 }
 
-void DrawObserverStackPanel()
+void DrawSymbolGlyph(const SymbolConvention& convention)
+{
+    const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const ImVec4& toneColor = ResolveToneColor(palette, convention.tone);
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const ImVec2 center(origin.x + 10.0f, origin.y + 10.0f);
+    const ImU32 lineColor = rhv::ui::ToU32(toneColor);
+
+    switch (convention.glyph)
+    {
+    case SymbolGlyph::Triangle:
+        drawList->AddTriangle(
+            ImVec2(center.x, center.y - 7.0f),
+            ImVec2(center.x - 7.0f, center.y + 6.0f),
+            ImVec2(center.x + 7.0f, center.y + 6.0f),
+            lineColor,
+            1.4f);
+        break;
+    case SymbolGlyph::Square:
+        drawList->AddRect(
+            ImVec2(center.x - 7.0f, center.y - 7.0f),
+            ImVec2(center.x + 7.0f, center.y + 7.0f),
+            lineColor,
+            0.0f,
+            0,
+            1.4f);
+        break;
+    case SymbolGlyph::Circle:
+        drawList->AddCircle(center, 7.0f, lineColor, 24, 1.4f);
+        break;
+    case SymbolGlyph::Slash:
+        drawList->AddLine(
+            ImVec2(center.x - 6.0f, center.y + 6.0f),
+            ImVec2(center.x + 6.0f, center.y - 6.0f),
+            lineColor,
+            1.6f);
+        break;
+    case SymbolGlyph::Ring:
+        drawList->AddCircle(center, 7.0f, lineColor, 24, 1.0f);
+        drawList->AddCircle(center, 4.0f, lineColor, 24, 1.0f);
+        break;
+    }
+
+    ImGui::Dummy(ImVec2(22.0f, 20.0f));
+}
+
+void DrawSymbolConventionRow(const SymbolConvention& convention)
 {
     const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
 
-    DrawObserverSlot("OBSERVER A", "UNASSIGNED", "OFFLINE", palette.activeText);
-    ImGui::Separator();
-    DrawObserverSlot("OBSERVER B", "RESERVED", "OFFLINE", palette.structuralText);
-    ImGui::Separator();
-    DrawObserverSlot("REFERENCE", "STACK IDLE", "NO SELECTION", palette.warningText);
+    DrawSymbolGlyph(convention);
+    ImGui::SameLine(32.0f);
+
+    ImGui::PushStyleColor(ImGuiCol_Text, ResolveToneColor(palette, convention.tone));
+    ImGui::TextUnformatted(convention.label.c_str());
+    ImGui::PopStyleColor();
+
+    ImGui::SameLine(108.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, palette.structuralText);
+    ImGui::TextUnformatted(convention.meaning.c_str());
+    ImGui::PopStyleColor();
+}
+
+void DrawObserverStackPanel(const OperationalState& operationalState)
+{
+    for (std::size_t index = 0; index < operationalState.observers.size(); ++index)
+    {
+        DrawObserverSlot(operationalState.observers[index]);
+        if (index + 1U < operationalState.observers.size())
+        {
+            ImGui::Separator();
+        }
+    }
 
     ImGui::Separator();
     rhv::ui::DrawWrappedNote(
         "STACK",
-        "Observer editing begins in later milestones. This column establishes where selection and observer telemetry will live.",
+        "Observer editing begins later. In 0D this stack establishes operational labels, clock vocabulary, and selection language only.",
         ThemeMode::TerminalBase);
+
+    ImGui::Separator();
+    rhv::ui::DrawWrappedNote(
+        "SYMBOL BUS",
+        "These symbols define the terminal’s internal visual language. They are conventions, not simulation output.",
+        ThemeMode::TerminalBase);
+
+    for (const SymbolConvention& convention : operationalState.symbolConventions)
+    {
+        DrawSymbolConventionRow(convention);
+    }
 }
 
-void DrawSystemStatePanel(const BootTelemetry& telemetry)
+void DrawSystemStatePanel(const BootTelemetry& telemetry, const OperationalState& operationalState)
 {
     const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
 
     rhv::ui::DrawBootStatusBlock(telemetry, false);
     ImGui::Separator();
-    rhv::ui::DrawStatusRow("VIEW MODE", "HYBRID PREP", palette.activeText, 116.0f);
-    rhv::ui::DrawStatusRow("2D PATH", "RESERVED / M1", palette.bodyText, 116.0f);
-    rhv::ui::DrawStatusRow("3D PATH", "RESERVED / M6", palette.warningText, 116.0f);
+    rhv::ui::DrawStatusRow("BOOT PHASE", operationalState.bootPhase, palette.warningText, 108.0f);
+    rhv::ui::DrawStatusRow("MODEL STATE", operationalState.modelState, palette.activeText, 108.0f);
+    rhv::ui::DrawStatusRow("WARN STATE", operationalState.warningState, palette.warningText, 108.0f);
+    rhv::ui::DrawStatusRow("VIEW LINK", operationalState.viewLinkState, palette.bodyText, 108.0f);
+
+    ImGui::Separator();
+    rhv::ui::DrawWrappedNote(
+        "BOOT NOTE",
+        operationalState.bootNarrative.c_str(),
+        ThemeMode::TerminalBase);
 }
 
-void DrawLogEntry(const char* code, const char* message, const ImVec4& codeColor)
+void DrawLogEntry(const EventLogEntry& entry)
 {
     const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const ImVec4& entryColor = ResolveToneColor(palette, entry.tone);
 
-    ImGui::PushStyleColor(ImGuiCol_Text, codeColor);
-    ImGui::TextUnformatted(code);
+    ImGui::PushStyleColor(ImGuiCol_Text, entryColor);
+    ImGui::TextUnformatted(entry.code.c_str());
     ImGui::PopStyleColor();
 
     ImGui::SameLine(86.0f);
     ImGui::PushStyleColor(ImGuiCol_Text, palette.bodyText);
-    ImGui::TextWrapped("%s", message);
+    ImGui::TextWrapped("%s", entry.message.c_str());
     ImGui::PopStyleColor();
 }
 
-void DrawEventLogPanel()
+void DrawEventLogPanel(const OperationalState& operationalState)
 {
-    const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
-
-    const std::array<const char*, 5> eventCodes{
-        "EV-00",
-        "EV-01",
-        "EV-02",
-        "EV-03",
-        "EV-04",
-    };
-
-    const std::array<const char*, 5> messages{
-        "SCREEN HIERARCHY LOCKED FOR HYBRID 2D + 3D WORKFLOW.",
-        "CAUSAL VIEW REGION RESERVED FOR DIAGRAMMATIC ANALYSIS.",
-        "SPATIAL VIEW REGION RESERVED FOR FUTURE 3D CAMERA PATH.",
-        "OBSERVER STACK AND SYSTEM STATE ROUTED TO SIDE COLUMN.",
-        "REAL COMMAND, EVENT, AND MODEL SYSTEMS DEFERRED TO 0D AND LATER.",
-    };
-
-    const std::array<ImVec4, 5> tones{
-        palette.activeText,
-        palette.bodyText,
-        palette.warningText,
-        palette.structuralText,
-        palette.mutedText,
-    };
-
-    for (std::size_t index = 0; index < eventCodes.size(); ++index)
+    for (const EventLogEntry& entry : operationalState.eventLog)
     {
-        DrawLogEntry(eventCodes[index], messages[index], tones[index]);
+        DrawLogEntry(entry);
     }
 }
 }  // namespace
@@ -351,6 +464,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
     }
 
     const HybridScreenLayout layout = BuildHybridScreenLayout(viewport->Pos, viewport->Size);
+    const OperationalState operationalState = rhv::core::BuildOperationalState(telemetry, frameState);
 
     if (BeginManagedPanel(
             "cmd_panel",
@@ -360,7 +474,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
             layout.commandStrip,
             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
     {
-        DrawCommandStripPanel(frameState);
+        DrawCommandStripPanel(operationalState);
     }
     EndManagedPanel();
 
@@ -371,7 +485,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
             ThemeMode::TerminalBase,
             layout.causalView))
     {
-        DrawCausalViewPanel(frameState);
+        DrawCausalViewPanel(frameState, operationalState);
     }
     EndManagedPanel();
 
@@ -382,7 +496,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
             ThemeMode::TerminalBase,
             layout.spatialView))
     {
-        DrawSpatialViewPanel(frameState);
+        DrawSpatialViewPanel(frameState, operationalState);
     }
     EndManagedPanel();
 
@@ -393,7 +507,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
             ThemeMode::TerminalBase,
             layout.observerStack))
     {
-        DrawObserverStackPanel();
+        DrawObserverStackPanel(operationalState);
     }
     EndManagedPanel();
 
@@ -404,7 +518,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
             ThemeMode::TerminalBase,
             layout.systemState))
     {
-        DrawSystemStatePanel(telemetry);
+        DrawSystemStatePanel(telemetry, operationalState);
     }
     EndManagedPanel();
 
@@ -415,7 +529,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
             ThemeMode::TerminalBase,
             layout.eventLog))
     {
-        DrawEventLogPanel();
+        DrawEventLogPanel(operationalState);
     }
     EndManagedPanel();
 }

@@ -22,7 +22,7 @@ HybridScreenLayout BuildHybridScreenLayout(
     const float availableWidth = std::max(viewportSize.x - (outerMargin * 2.0f), 640.0f);
     const float availableHeight = std::max(viewportSize.y - (outerMargin * 2.0f), 420.0f);
 
-    const float commandHeight = std::clamp(availableHeight * 0.09f, 54.0f, 72.0f);
+    const float commandHeight = std::clamp(availableHeight * 0.11f, 74.0f, 92.0f);
     float eventLogHeight = std::clamp(availableHeight * 0.24f, 108.0f, 180.0f);
     float bodyHeight = availableHeight - commandHeight - eventLogHeight - (gap * 2.0f);
 

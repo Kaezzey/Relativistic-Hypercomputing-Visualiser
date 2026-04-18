@@ -15,6 +15,7 @@ include(cmake/Dependencies.cmake)
 set(RHV_SOURCES
     src/app/main.cpp
     src/app/Application.cpp
+    src/core/OperationalStateBuilder.cpp
     src/ui/BootPanel.cpp
     src/ui/HybridLayout.cpp
     src/ui/HybridScreen.cpp
@@ -28,6 +29,8 @@ set(RHV_HEADERS
     src/app/Application.h
     src/models/BootTelemetry.h
     src/models/FrameVisualState.h
+    src/models/OperationalState.h
+    src/core/OperationalStateBuilder.h
     src/ui/BootPanel.h
     src/ui/HybridLayout.h
     src/ui/HybridScreen.h
