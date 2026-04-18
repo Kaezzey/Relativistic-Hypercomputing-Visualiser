@@ -1,7 +1,9 @@
 #include "ui/HybridScreen.h"
 
+#include "core/MinkowskiDemoScene.h"
 #include "core/OperationalStateBuilder.h"
 #include "models/OperationalState.h"
+#include "render2d/MinkowskiDiagramRenderer.h"
 #include "ui/BootPanel.h"
 #include "ui/HybridLayout.h"
 #include "ui/PanelFrame.h"
@@ -12,7 +14,8 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
+#include <iomanip>
+#include <sstream>
 #include <string>
 
 namespace
@@ -24,83 +27,11 @@ using rhv::ui::HybridScreenLayout;
 using rhv::models::ObserverPlaceholder;
 using rhv::models::OperationalState;
 using rhv::ui::Palette;
-using rhv::ui::PanelRect;
 using rhv::models::StatusBadge;
 using rhv::models::SymbolConvention;
 using rhv::models::SymbolGlyph;
-using rhv::ui::ThemeMode;
 using rhv::models::Tone;
-
-struct CanvasRect
-{
-    ImVec2 min;
-    ImVec2 max;
-
-    [[nodiscard]] float Width() const
-    {
-        return max.x - min.x;
-    }
-
-    [[nodiscard]] float Height() const
-    {
-        return max.y - min.y;
-    }
-};
-
-void DrawDashedLine(
-    ImDrawList* drawList,
-    const ImVec2 start,
-    const ImVec2 end,
-    const ImU32 color,
-    const float thickness)
-{
-    const ImVec2 delta(end.x - start.x, end.y - start.y);
-    const float length = std::sqrt((delta.x * delta.x) + (delta.y * delta.y));
-    if (length <= 0.001f)
-    {
-        return;
-    }
-
-    constexpr float dashLength = 8.0f;
-    constexpr float gapLength = 5.0f;
-
-    const ImVec2 direction(delta.x / length, delta.y / length);
-    float distance = 0.0f;
-
-    while (distance < length)
-    {
-        const float nextDistance = std::min(distance + dashLength, length);
-        const ImVec2 segmentStart(
-            start.x + (direction.x * distance),
-            start.y + (direction.y * distance));
-        const ImVec2 segmentEnd(
-            start.x + (direction.x * nextDistance),
-            start.y + (direction.y * nextDistance));
-
-        drawList->AddLine(segmentStart, segmentEnd, color, thickness);
-        distance += dashLength + gapLength;
-    }
-}
-
-void DrawSquareNode(
-    ImDrawList* drawList,
-    const ImVec2 center,
-    const float halfSize,
-    const ImU32 borderColor,
-    const ImU32 fillColor)
-{
-    drawList->AddRectFilled(
-        ImVec2(center.x - halfSize, center.y - halfSize),
-        ImVec2(center.x + halfSize, center.y + halfSize),
-        fillColor);
-    drawList->AddRect(
-        ImVec2(center.x - halfSize, center.y - halfSize),
-        ImVec2(center.x + halfSize, center.y + halfSize),
-        borderColor,
-        0.0f,
-        0,
-        1.2f);
-}
+using rhv::ui::ThemeMode;
 
 const ImVec4& ResolveToneColor(const Palette& palette, const Tone tone)
 {
@@ -117,6 +48,25 @@ const ImVec4& ResolveToneColor(const Palette& palette, const Tone tone)
     }
 
     return palette.bodyText;
+}
+
+Tone ResolveRelationTone(const rhv::render2d::CausalRelation relation)
+{
+    switch (relation)
+    {
+    case rhv::render2d::CausalRelation::Selected:
+        return Tone::Active;
+    case rhv::render2d::CausalRelation::TimelikeFuture:
+    case rhv::render2d::CausalRelation::TimelikePast:
+        return Tone::Active;
+    case rhv::render2d::CausalRelation::NullFuture:
+    case rhv::render2d::CausalRelation::NullPast:
+        return Tone::Warning;
+    case rhv::render2d::CausalRelation::Spacelike:
+        return Tone::Structural;
+    }
+
+    return Tone::Structural;
 }
 
 void DrawStatusBadge(const StatusBadge& badge)
@@ -137,105 +87,6 @@ void DrawStatusBadge(const StatusBadge& badge)
         badge.label.c_str(),
         ResolveToneColor(terminalPalette, badge.tone),
         ThemeMode::TerminalBase);
-}
-
-void DrawCausalViewPlaceholder(const FrameVisualState& frameState, const OperationalState& operationalState)
-{
-    const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
-    const ImVec2 canvasOrigin = ImGui::GetCursorScreenPos();
-    const float canvasHeight = std::max(ImGui::GetContentRegionAvail().y - 42.0f, 210.0f);
-    const ImVec2 canvasSize(ImGui::GetContentRegionAvail().x, canvasHeight);
-    ImGui::InvisibleButton("causal_view_canvas", canvasSize);
-
-    const CanvasRect rect{
-        canvasOrigin,
-        ImVec2(canvasOrigin.x + canvasSize.x, canvasOrigin.y + canvasSize.y)};
-
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    drawList->AddRectFilled(
-        rect.min,
-        rect.max,
-        rhv::ui::ToU32(palette.viewportBackground, 0.92f));
-    drawList->AddRect(
-        rect.min,
-        rect.max,
-        rhv::ui::ToU32(palette.panelBorder, 0.90f));
-
-    for (float x = rect.min.x + 24.0f; x < rect.max.x; x += 24.0f)
-    {
-        drawList->AddLine(
-            ImVec2(x, rect.min.y),
-            ImVec2(x, rect.max.y),
-            rhv::ui::ToU32(palette.panelBorder, 0.08f),
-            1.0f);
-    }
-
-    for (float y = rect.min.y + 24.0f; y < rect.max.y; y += 24.0f)
-    {
-        drawList->AddLine(
-            ImVec2(rect.min.x, y),
-            ImVec2(rect.max.x, y),
-            rhv::ui::ToU32(palette.panelBorder, 0.08f),
-            1.0f);
-    }
-
-    const ImVec2 nodeA(rect.min.x + rect.Width() * 0.18f, rect.min.y + rect.Height() * 0.30f);
-    const ImVec2 nodeB(rect.min.x + rect.Width() * 0.43f, rect.min.y + rect.Height() * 0.56f);
-    const ImVec2 nodeC(rect.min.x + rect.Width() * 0.74f, rect.min.y + rect.Height() * 0.40f);
-
-    DrawDashedLine(
-        drawList,
-        nodeA,
-        nodeB,
-        rhv::ui::ToU32(palette.structuralText, 0.70f),
-        1.2f);
-    DrawDashedLine(
-        drawList,
-        nodeB,
-        nodeC,
-        rhv::ui::ToU32(palette.activeText, 0.72f),
-        1.2f);
-
-    const float pulse = static_cast<float>(0.58 + (0.18 * std::sin(frameState.uptimeSeconds * 2.2)));
-    DrawSquareNode(
-        drawList,
-        nodeA,
-        9.0f,
-        rhv::ui::ToU32(palette.warningText, 0.90f),
-        rhv::ui::ToU32(palette.panelRaised, 0.70f));
-    DrawSquareNode(
-        drawList,
-        nodeB,
-        11.0f,
-        rhv::ui::ToU32(palette.activeText, 0.90f),
-        rhv::ui::ToU32(palette.activeText, pulse * 0.18f));
-    DrawSquareNode(
-        drawList,
-        nodeC,
-        9.0f,
-        rhv::ui::ToU32(palette.structuralText, 0.90f),
-        rhv::ui::ToU32(palette.panelRaised, 0.70f));
-
-    drawList->AddText(
-        ImVec2(rect.min.x + 14.0f, rect.min.y + 10.0f),
-        rhv::ui::ToU32(palette.structuralText),
-        operationalState.causalViewMode.c_str());
-    drawList->AddText(
-        ImVec2(nodeA.x - 28.0f, nodeA.y - 22.0f),
-        rhv::ui::ToU32(palette.warningText),
-        "EVENT SLOT");
-    drawList->AddText(
-        ImVec2(nodeB.x + 12.0f, nodeB.y - 6.0f),
-        rhv::ui::ToU32(palette.activeText),
-        "TRACE BUS");
-    drawList->AddText(
-        ImVec2(nodeC.x - 16.0f, nodeC.y + 14.0f),
-        rhv::ui::ToU32(palette.structuralText),
-        "QUERY GATE");
-    drawList->AddText(
-        ImVec2(rect.max.x - 182.0f, rect.max.y - 22.0f),
-        rhv::ui::ToU32(palette.mutedText),
-        "M1 ENABLES 2D SPACETIME");
 }
 
 void DrawCommandStripPanel(const OperationalState& operationalState)
@@ -260,25 +111,99 @@ void DrawCommandStripPanel(const OperationalState& operationalState)
     ImGui::PopStyleColor();
 }
 
-void DrawCausalViewPanel(const FrameVisualState& frameState, const OperationalState& operationalState)
+void DrawCausalSelectionSummary(
+    const Palette& palette,
+    const rhv::models::SpacetimeEvent& selectedEvent,
+    const rhv::render2d::CausalRelation relationToOrigin,
+    const rhv::render2d::RelationCounts& relationCounts,
+    const std::string& intervalLabel)
+{
+    if (ImGui::BeginTable(
+            "causal_selection_summary",
+            2,
+            ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings))
+    {
+        ImGui::TableNextColumn();
+        rhv::ui::DrawStatusRow(
+            "SELECT",
+            selectedEvent.label,
+            ResolveToneColor(palette, selectedEvent.tone),
+            88.0f);
+        rhv::ui::DrawStatusRow(
+            "COORD",
+            rhv::render2d::FormatCoordinateLabel(selectedEvent),
+            palette.bodyText,
+            88.0f);
+
+        ImGui::TableNextColumn();
+        rhv::ui::DrawStatusRow(
+            "REL TO O0",
+            rhv::render2d::DescribeRelation(relationToOrigin),
+            ResolveToneColor(palette, ResolveRelationTone(relationToOrigin)),
+            96.0f);
+        rhv::ui::DrawStatusRow("INTERVAL", intervalLabel, palette.structuralText, 96.0f);
+        ImGui::EndTable();
+    }
+
+    const std::string timelikeChip = "TIMELIKE " + std::to_string(relationCounts.timelikeCount);
+    const std::string nullChip = "NULL " + std::to_string(relationCounts.nullCount);
+    const std::string spacelikeChip = "SPACELIKE " + std::to_string(relationCounts.spacelikeCount);
+
+    rhv::ui::DrawLabelChip(timelikeChip.c_str(), palette.activeText, ThemeMode::TerminalBase);
+    ImGui::SameLine();
+    rhv::ui::DrawLabelChip(nullChip.c_str(), palette.warningText, ThemeMode::TerminalBase);
+    ImGui::SameLine();
+    rhv::ui::DrawLabelChip(spacelikeChip.c_str(), palette.structuralText, ThemeMode::TerminalBase);
+
+    ImGui::PushStyleColor(ImGuiCol_Text, palette.structuralText);
+    ImGui::TextWrapped("%s", selectedEvent.description.c_str());
+    ImGui::PopStyleColor();
+}
+
+void DrawCausalViewPanel(const OperationalState& operationalState)
 {
     const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    static const rhv::models::MinkowskiDiagramScene scene = rhv::core::BuildMinkowskiDemoScene();
+    static rhv::render2d::MinkowskiViewState viewState{};
+
+    rhv::render2d::EnsureViewState(scene, viewState);
 
     rhv::ui::DrawStatusRow("VIEW MODE", operationalState.causalViewMode, palette.activeText, 116.0f);
     rhv::ui::DrawStatusRow("CAUSAL STATUS", operationalState.causalStatus, palette.warningText, 116.0f);
-    rhv::ui::DrawStatusRow("VIEW LINK", operationalState.viewLinkState, palette.bodyText, 116.0f);
-
-    rhv::ui::DrawWrappedNote(
+    rhv::ui::DrawStatusRow("UNITS", scene.unitConvention, palette.bodyText, 116.0f);
+    rhv::ui::DrawStatusRow(
         "MODEL WARN",
-        "Milestone 0D provides terminal vocabulary and placeholder panel behavior only. Minkowski axes, events, and light-cone logic begin later.",
-        ThemeMode::TerminalBase);
-    DrawCausalViewPlaceholder(frameState, operationalState);
+        "1+1 FLAT ONLY / NO ACCEL / NO CURVATURE / NO 3D OPTICS",
+        palette.warningText,
+        116.0f);
 
     rhv::ui::DrawLabelChip("EVENTS", palette.activeText, ThemeMode::TerminalBase);
     ImGui::SameLine();
-    rhv::ui::DrawLabelChip("WORLDLINES", palette.structuralText, ThemeMode::TerminalBase);
+    rhv::ui::DrawLabelChip("LIGHT CONE", palette.warningText, ThemeMode::TerminalBase);
     ImGui::SameLine();
-    rhv::ui::DrawLabelChip("NULL PATHS OFFLINE", palette.warningText, ThemeMode::TerminalBase);
+    rhv::ui::DrawLabelChip("TOY MODEL", palette.structuralText, ThemeMode::TerminalBase);
+
+    const float canvasHeight = std::max(0.0f, ImGui::GetContentRegionAvail().y - 104.0f);
+    const rhv::render2d::MinkowskiRenderResult renderResult =
+        rhv::render2d::DrawMinkowskiDiagram(scene, viewState, "minkowski_canvas", canvasHeight);
+    const rhv::models::SpacetimeEvent& selectedEvent = scene.events[renderResult.selectedEventIndex];
+    const rhv::models::SpacetimeEvent& originEvent = scene.events[scene.defaultSelectedEventIndex];
+    const rhv::render2d::CausalRelation relationToOrigin =
+        rhv::render2d::ClassifyRelation(originEvent, selectedEvent);
+    const rhv::render2d::RelationCounts relationCounts =
+        rhv::render2d::CountRelations(scene, renderResult.selectedEventIndex);
+    const double intervalSquared =
+        rhv::render2d::ComputeIntervalSquared(originEvent, selectedEvent);
+
+    std::ostringstream intervalStream;
+    intervalStream << std::fixed << std::setprecision(2) << "DS^2=" << intervalSquared;
+
+    DrawCausalSelectionSummary(
+        palette,
+        selectedEvent,
+        relationToOrigin,
+        relationCounts,
+        intervalStream.str());
 }
 
 void DrawSpatialViewPanel(const FrameVisualState& frameState, const OperationalState& operationalState)
@@ -295,7 +220,9 @@ void DrawSpatialViewPanel(const FrameVisualState& frameState, const OperationalS
         "The insert below is schematic telemetry only. It is not a 3D renderer, not a black-hole region model, and not an optical lensing simulation.",
         ThemeMode::TerminalBase);
 
-    const ImVec2 canvasSize(ImGui::GetContentRegionAvail().x, std::max(ImGui::GetContentRegionAvail().y - 44.0f, 210.0f));
+    const ImVec2 canvasSize(
+        ImGui::GetContentRegionAvail().x,
+        std::max(ImGui::GetContentRegionAvail().y - 44.0f, 210.0f));
     rhv::ui::DrawSchematicTelemetryCanvas(frameState, canvasSize, "spatial_view_insert");
 
     rhv::ui::DrawLabelChip("SCHEMATIC INSERT", schematicPalette.accentPrimary, ThemeMode::SchematicTelemetry);
@@ -402,7 +329,7 @@ void DrawObserverStackPanel(const OperationalState& operationalState)
     ImGui::Separator();
     rhv::ui::DrawWrappedNote(
         "SYMBOL BUS",
-        "These symbols define the terminal’s internal visual language. They are conventions, not simulation output.",
+        "These symbols define the terminal's internal visual language. They are conventions, not simulation output.",
         ThemeMode::TerminalBase);
 
     for (const SymbolConvention& convention : operationalState.symbolConventions)
@@ -483,9 +410,10 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
             "CAUSAL VIEW",
             "2D REGION",
             ThemeMode::TerminalBase,
-            layout.causalView))
+            layout.causalView,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
     {
-        DrawCausalViewPanel(frameState, operationalState);
+        DrawCausalViewPanel(operationalState);
     }
     EndManagedPanel();
 

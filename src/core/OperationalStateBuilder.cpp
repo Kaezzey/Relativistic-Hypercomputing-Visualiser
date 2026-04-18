@@ -83,18 +83,18 @@ models::OperationalState BuildOperationalState(
         : (isBootTransient
             ? "CMD > WAIT / BOOT VECTOR ACTIVE"
             : (isLinkCycling
-                ? "CMD > QUERY PAST [LOCKED]"
-                : "CMD > ARM VIEW LINK [DENIED]"));
+                ? "CMD > SELECT EVENT / TRACE CONE"
+                : "CMD > DRAG PAN / WHEEL SCALE"));
     state.commandState = !isDisplayFocused
         ? "CMD BUS PARKED"
         : "CMD VOCAB LIVE / EXECUTION OFFLINE";
     state.activeScreen = "HYBRID ANALYSIS";
-    state.modelState = "TEACHING CONSOLE / NO PHYSICS ENGINE";
+    state.modelState = "FLAT SPACETIME / C = 1 / 1+1 D";
     state.viewLinkState = !isDisplayFocused
         ? "SYNC DEGRADED / STANDBY"
         : (isBootTransient ? "SYNC ACQUIRING" : "SYNC STABLE");
-    state.causalViewMode = "CAUSAL MAP / PLACEHOLDER";
-    state.causalStatus = "WORLDLINE BUS OFFLINE / M1";
+    state.causalViewMode = "MINKOWSKI MAP / LIVE";
+    state.causalStatus = "EVENT GRID ONLINE / LIGHT-CONE QUERY";
     state.spatialViewMode = "REGION MAP / PLACEHOLDER";
     state.spatialStatus = "SCENE PATH OFFLINE / M6";
     state.lensState = "OPTICAL MODE OFFLINE / M9";
@@ -102,7 +102,7 @@ models::OperationalState BuildOperationalState(
     state.commandBadges = {
         StatusBadge{bootPhase.phase, bootPhase.tone, false},
         StatusBadge{state.activeScreen, Tone::Active, false},
-        StatusBadge{"CAUSAL MAP", Tone::Structural, false},
+        StatusBadge{"MINKOWSKI LIVE", Tone::Active, false},
         StatusBadge{"SCHEMATIC INSERT", Tone::Warning, true},
     };
 
@@ -134,7 +134,7 @@ models::OperationalState BuildOperationalState(
             bootPhase.tone},
         EventLogEntry{
             "CMD-02",
-            "CMD BUS EXPOSES OPERATIONAL VOCABULARY ONLY. EXECUTION PATH IS NOT IMPLEMENTED IN 0D.",
+            "CAUSAL VIEW ACCEPTS EVENT SELECTION, PAN, AND SCALE. MODEL EDITING IS STILL OFFLINE.",
             Tone::Structural},
         EventLogEntry{
             "MODE-03",
@@ -142,7 +142,7 @@ models::OperationalState BuildOperationalState(
             Tone::Active},
         EventLogEntry{
             "MODE-04",
-            "SPATIAL VIEW MODE SET TO " + state.spatialViewMode + ".",
+            "UNITS FIXED TO C = 1. LIGHT-CONE GUIDES USE 45 DEGREE NULL LINES IN THE TOY MODEL.",
             Tone::Warning},
         EventLogEntry{
             "WARN-05",
@@ -150,7 +150,7 @@ models::OperationalState BuildOperationalState(
             !isDisplayFocused ? Tone::Warning : Tone::Muted},
         EventLogEntry{
             "NOTE-06",
-            "MODEL STATE " + state.modelState + ". DISPLAY SIZE " +
+            "SPATIAL VIEW REMAINS RESERVED. DISPLAY SIZE " +
                 std::to_string(telemetry.framebufferWidth) + " X " +
                 std::to_string(telemetry.framebufferHeight) + ".",
             Tone::Muted},
@@ -173,7 +173,7 @@ models::OperationalState BuildOperationalState(
 
     if (!isBootTransient)
     {
-        state.eventLog[0].message = "BOOT PHASE STABLE. SCREEN BUS IN STATION KEEP.";
+        state.eventLog[0].message = "BOOT PHASE STABLE. MINKOWSKI DEMO SCENE ONLINE.";
     }
 
     state.eventLog[5].message += " " + BuildFrameClockLabel(frameState) + ".";
