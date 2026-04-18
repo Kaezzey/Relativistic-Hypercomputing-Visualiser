@@ -16,10 +16,12 @@ set(RHV_SOURCES
     src/app/main.cpp
     src/app/Application.cpp
     src/core/MinkowskiDemoScene.cpp
+    src/core/ObserverMotion.cpp
     src/core/OperationalStateBuilder.cpp
     src/core/ProperTime.cpp
     src/core/SignalPropagation.cpp
     src/render2d/MinkowskiDiagramRenderer.cpp
+    src/render3d/SpatialViewportRenderer.cpp
     src/ui/BootPanel.cpp
     src/ui/HybridLayout.cpp
     src/ui/HybridScreen.cpp
@@ -35,11 +37,14 @@ set(RHV_HEADERS
     src/models/FrameVisualState.h
     src/models/MinkowskiDiagramModel.h
     src/models/OperationalState.h
+    src/models/SpatialViewState.h
     src/core/MinkowskiDemoScene.h
+    src/core/ObserverMotion.h
     src/core/OperationalStateBuilder.h
     src/core/ProperTime.h
     src/core/SignalPropagation.h
     src/render2d/MinkowskiDiagramRenderer.h
+    src/render3d/SpatialViewportRenderer.h
     src/ui/BootPanel.h
     src/ui/HybridLayout.h
     src/ui/HybridScreen.h

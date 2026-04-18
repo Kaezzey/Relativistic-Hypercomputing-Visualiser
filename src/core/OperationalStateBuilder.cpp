@@ -1,4 +1,5 @@
 #include "core/OperationalStateBuilder.h"
+#include "core/ObserverMotion.h"
 #include "core/ProperTime.h"
 #include "core/SignalPropagation.h"
 
@@ -76,6 +77,12 @@ std::string FormatSignedValue(const double value)
 
 std::string BuildWorldlineEquation(const InertialObserver& observer)
 {
+    if (rhv::core::UsesAcceleratedMotion(observer))
+    {
+        return "ACCEL / X0=" + FormatSignedValue(observer.spatialIntercept) +
+            " / A=" + FormatSignedValue(observer.properAcceleration);
+    }
+
     std::ostringstream stream;
     stream << std::fixed << std::setprecision(2)
            << "X=" << observer.spatialIntercept
@@ -87,6 +94,11 @@ std::string BuildWorldlineEquation(const InertialObserver& observer)
 
 std::string BuildVelocityLabel(const InertialObserver& observer)
 {
+    if (rhv::core::UsesAcceleratedMotion(observer))
+    {
+        return "A=" + FormatSignedValue(observer.properAcceleration) + " / V VAR";
+    }
+
     return "V=" + FormatSignedValue(observer.velocity) + " C";
 }
 
@@ -114,7 +126,19 @@ std::string BuildSignalDirectionLabel(const rhv::core::SignalDirection direction
     return direction == rhv::core::SignalDirection::PositiveX ? "+X" : "-X";
 }
 
-std::string BuildObserverLinkLabel(const rhv::core::ObserverSignalLink& link)
+std::string BuildMotionModeLabel(const InertialObserver& observer)
+{
+    if (rhv::core::UsesAcceleratedMotion(observer))
+    {
+        return "ACCEL MODE / HORIZON GUIDE / PEDAGOGICAL";
+    }
+
+    return "INERTIAL MODE / STRAIGHT TRACE";
+}
+
+std::string BuildObserverLinkLabel(
+    const InertialObserver& observer,
+    const rhv::core::ObserverSignalLink& link)
 {
     switch (link.state)
     {
@@ -124,7 +148,9 @@ std::string BuildObserverLinkLabel(const rhv::core::ObserverSignalLink& link)
         return "LINK VALID / RX T=" + FormatSignedValue(link.receiveTime) + " / " +
             BuildSignalDirectionLabel(link.direction);
     case rhv::core::ObserverSignalState::NoFutureIntersection:
-        return "CAUSAL ACCESS LOST";
+        return rhv::core::HasPastHorizonGuide(observer)
+            ? "HORIZON SHADOW / RX LOST"
+            : "CAUSAL ACCESS LOST";
     }
 
     return "CAUSAL ACCESS LOST";
@@ -158,6 +184,11 @@ Tone ResolveObserverSelectionTone(const InertialObserver& observer)
 {
     return observer.tone == Tone::Muted ? Tone::Structural : observer.tone;
 }
+
+bool SelectedObserverUsesAcceleration(const InertialObserver& observer)
+{
+    return rhv::core::UsesAcceleratedMotion(observer);
+}
 }  // namespace
 
 namespace rhv::core
@@ -176,6 +207,7 @@ models::OperationalState BuildOperationalState(
     const std::size_t eventIndex = std::min(selectedEventIndex, scene.events.size() - 1U);
     const InertialObserver& selectedObserver = scene.observers[observerIndex];
     const SpacetimeEvent& selectedEvent = scene.events[eventIndex];
+    const bool selectedObserverUsesAcceleration = SelectedObserverUsesAcceleration(selectedObserver);
     const rhv::core::SignalPropagationReport signalReport =
         rhv::core::ComputeSignalPropagation(scene, observerIndex, eventIndex);
 
@@ -186,31 +218,46 @@ models::OperationalState BuildOperationalState(
         ? "DISPLAY STANDBY / INPUT HOLD"
         : (isBootTransient
             ? "BOOT TRANSIENT / TELEMETRY PARTIAL"
-            : "TOY MODEL / NULL TX ONLY");
+            : (selectedObserverUsesAcceleration
+                ? "PEDAGOGICAL ACCEL / HORIZON GUIDE ACTIVE"
+                : "TOY MODEL / 2D CAUSAL + 3D SNAPSHOT"));
     state.commandLine = !isDisplayFocused
         ? "CMD > INPUT HOLD / OPERATOR AWAY"
         : (isBootTransient
             ? "CMD > WAIT / DISPLAY BUS ARMING"
-            : "CMD > LMB EVENT OR WORLDLINE / STACK SELECT / TRACE NULL TX");
+            : (selectedObserverUsesAcceleration
+                ? "CMD > CAUSAL LMB SELECT / SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE / TRACE ACCEL HORIZON"
+                : "CMD > CAUSAL LMB SELECT / SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE / TRACE NULL TX"));
     state.commandState = !isDisplayFocused
         ? "CMD BUS PARKED"
-        : "NULL TX LIVE / EDIT OFFLINE";
+        : (selectedObserverUsesAcceleration
+            ? "ACCEL GUIDE LIVE / 3D CAMERA ONLINE"
+            : "NULL TX LIVE / 3D CAMERA ONLINE");
     state.activeScreen = "HYBRID ANALYSIS";
-    state.modelState = "FLAT SPACETIME / INERTIAL WORLDLINES / C = 1 / NULL TX LIVE";
+    state.modelState = selectedObserverUsesAcceleration
+        ? "FLAT SPACETIME / ACCEL TOY / RINDLER GUIDE / C = 1"
+        : "FLAT SPACETIME / INERTIAL WORLDLINES / C = 1 / NULL TX LIVE";
     state.viewLinkState = !isDisplayFocused
         ? "SYNC DEGRADED / STANDBY"
-        : (isBootTransient ? "SYNC ACQUIRING" : "2D ACTIVE / 3D HOLD");
-    state.causalViewMode = "MINKOWSKI MAP / WORLDLINES + SIGNALS";
-    state.causalStatus = "NULL TX ONLINE / LINK QUERY ACTIVE";
-    state.spatialViewMode = "REGION MAP / PLACEHOLDER";
-    state.spatialStatus = "SCENE PATH OFFLINE / M6";
-    state.lensState = "OPTICAL MODE OFFLINE / M9";
+        : (isBootTransient ? "SYNC ACQUIRING" : "2D ACTIVE / 3D SNAPSHOT LIVE");
+    state.causalViewMode = selectedObserverUsesAcceleration
+        ? "MINKOWSKI MAP / ACCEL TRACE + SIGNALS"
+        : "MINKOWSKI MAP / WORLDLINES + SIGNALS";
+    state.causalStatus = selectedObserverUsesAcceleration
+        ? "HORIZON GUIDE ACTIVE / CAUSAL ACCESS SHIFTING"
+        : "NULL TX ONLINE / LINK QUERY ACTIVE";
+    state.spatialViewMode = "SPATIAL SNAPSHOT / OBSERVER MARKERS";
+    state.spatialStatus = "PLACEMENT ONLINE / EMISSIVE WIREFRAME";
+    state.lensState = "OPTICAL MODE OFFLINE / NO LENS MODEL";
 
     state.commandBadges = {
         StatusBadge{bootPhase.phase, bootPhase.tone, false},
         StatusBadge{state.activeScreen, Tone::Active, false},
         StatusBadge{selectedObserver.observerId, ResolveObserverSelectionTone(selectedObserver), false},
-        StatusBadge{"NULL TX LIVE", Tone::Warning, false},
+        StatusBadge{
+            selectedObserverUsesAcceleration ? "ACCEL GUIDE" : "NULL TX LIVE",
+            Tone::Warning,
+            false},
     };
 
     for (std::size_t index = 0; index < scene.observers.size(); ++index)
@@ -220,12 +267,16 @@ models::OperationalState BuildOperationalState(
             rhv::core::ComputeProperTimeSample(observer, scene.properTimeWindow);
         state.observers[index] = ObserverTelemetry{
             observer.observerId,
-            index == observerIndex ? "SELECTED / WORLDLINE LOCK" : "TRACK READY / STACK SELECT",
+            index == observerIndex
+                ? (rhv::core::UsesAcceleratedMotion(observer)
+                    ? "SELECTED / ACCEL MODE / PEDAGOGICAL"
+                    : "SELECTED / WORLDLINE LOCK")
+                : "TRACK READY / STACK SELECT",
             BuildWorldlineEquation(observer),
             BuildVelocityLabel(observer),
-            BuildClockWindowLabel(sample),
+            BuildMotionModeLabel(observer),
             BuildProperTimeLabel(sample),
-            BuildObserverLinkLabel(signalReport.observerLinks[index]),
+            BuildObserverLinkLabel(observer, signalReport.observerLinks[index]),
             observer.tone,
             index == observerIndex};
     }
@@ -242,23 +293,30 @@ models::OperationalState BuildOperationalState(
                 BuildWorldlineEquation(selectedObserver) + ".",
             ResolveObserverSelectionTone(selectedObserver)},
         EventLogEntry{
-            "TX-03",
-            selectedObserver.observerId + " NULL TX ORIGIN / T=" +
-                FormatSignedValue(signalReport.transmitTime) + " / X=" +
-                FormatSignedValue(signalReport.transmitX) + ".",
+            selectedObserverUsesAcceleration ? "ACC-03" : "TX-03",
+            selectedObserverUsesAcceleration
+                ? (selectedObserver.observerId +
+                    " USES A PEDAGOGICAL CONSTANT-PROPER-ACCELERATION TRACE. HORIZON GUIDE IS FLAT-SPACETIME INTUITION ONLY.")
+                : (selectedObserver.observerId + " NULL TX ORIGIN / T=" +
+                    FormatSignedValue(signalReport.transmitTime) + " / X=" +
+                    FormatSignedValue(signalReport.transmitX) + "."),
             Tone::Warning},
         EventLogEntry{
-            "LINK-04",
-            BuildEventLinkLogLine(selectedEvent.label, signalReport.eventLink),
+            selectedObserverUsesAcceleration ? "HZN-04" : "LINK-04",
+            selectedObserverUsesAcceleration && rhv::core::IsEventBeyondPastHorizon(selectedObserver, selectedEvent)
+                ? ("TARGET " + selectedEvent.label +
+                    " SITS BEHIND THE SELECTED OBSERVER'S PAST HORIZON GUIDE. THIS IS PEDAGOGICAL RINDLER INTUITION.")
+                : BuildEventLinkLogLine(selectedEvent.label, signalReport.eventLink),
             signalReport.eventLink.state == rhv::core::EventSignalState::LinkValid ? Tone::Active : Tone::Warning},
         EventLogEntry{
             "RX-05",
             std::to_string(signalReport.validObserverLinkCount) +
-                " OBSERVER LINK(S) VALID FROM THE CURRENT TX ORIGIN.",
+                " OBSERVER LINK(S) VALID FROM THE CURRENT TX ORIGIN." +
+                (selectedObserverUsesAcceleration ? " CAUSAL ACCESS CAN SHIFT WITH COORDINATE TIME." : ""),
             signalReport.validObserverLinkCount > 0 ? Tone::Active : Tone::Warning},
         EventLogEntry{
             "CTL-06",
-            "LEFT CLICK EVENT OR WORLDLINE. STACK SELECT DRIVES THE SAME OBSERVER LOCK. DISPLAY SIZE " +
+            "CAUSAL LMB SELECT. SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE. DISPLAY SIZE " +
                 std::to_string(telemetry.framebufferWidth) + " X " +
                 std::to_string(telemetry.framebufferHeight) + ".",
             Tone::Muted},
@@ -281,7 +339,9 @@ models::OperationalState BuildOperationalState(
 
     if (!isBootTransient)
     {
-        state.eventLog[0].message = "BOOT PHASE STABLE. WORLDLINE SIGNAL DEMO SCENE ONLINE.";
+        state.eventLog[0].message = selectedObserverUsesAcceleration
+            ? "BOOT PHASE STABLE. ACCELERATION DEMO SCENE AND 3D OBSERVER SNAPSHOT ONLINE."
+            : "BOOT PHASE STABLE. WORLDLINE SIGNAL DEMO SCENE AND 3D OBSERVER SNAPSHOT ONLINE.";
     }
 
     state.eventLog[5].message += " " + BuildFrameClockLabel(frameState) + ".";

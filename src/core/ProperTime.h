@@ -15,6 +15,6 @@ struct ProperTimeSample
 };
 
 [[nodiscard]] ProperTimeSample ComputeProperTimeSample(
-    const models::InertialObserver& observer,
+    const models::ObserverWorldline& observer,
     const models::ProperTimeSampleWindow& sampleWindow);
 }  // namespace rhv::core

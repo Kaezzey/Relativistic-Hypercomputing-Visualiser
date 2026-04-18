@@ -1,5 +1,6 @@
 #include "render2d/MinkowskiDiagramRenderer.h"
 
+#include "core/ObserverMotion.h"
 #include "core/SignalPropagation.h"
 #include "ui/Theme.h"
 
@@ -119,8 +120,38 @@ ImVec2 ObserverToScreen(
     const InertialObserver& observer,
     const double coordinateTime)
 {
-    const double spatialX = observer.spatialIntercept + (observer.velocity * coordinateTime);
+    const double spatialX = rhv::core::ComputeObserverPosition(observer, coordinateTime);
     return WorldToScreen(rect, viewState, spatialX, coordinateTime);
+}
+
+float DistanceSquaredToSegment(
+    const ImVec2& point,
+    const ImVec2& segmentStart,
+    const ImVec2& segmentEnd);
+
+float ComputeObserverScreenDistanceSquared(
+    const CanvasRect& rect,
+    const MinkowskiViewState& viewState,
+    const InertialObserver& observer,
+    const VisibleWorldBounds& bounds,
+    const ImVec2& mousePosition)
+{
+    constexpr int sampleCount = 72;
+    ImVec2 previousPoint = ObserverToScreen(rect, viewState, observer, bounds.tMin);
+    float bestDistanceSquared = std::numeric_limits<float>::max();
+
+    for (int index = 1; index <= sampleCount; ++index)
+    {
+        const double interpolation = static_cast<double>(index) / static_cast<double>(sampleCount);
+        const double coordinateTime = bounds.tMin + ((bounds.tMax - bounds.tMin) * interpolation);
+        const ImVec2 currentPoint = ObserverToScreen(rect, viewState, observer, coordinateTime);
+        bestDistanceSquared = std::min(
+            bestDistanceSquared,
+            DistanceSquaredToSegment(mousePosition, previousPoint, currentPoint));
+        previousPoint = currentPoint;
+    }
+
+    return bestDistanceSquared;
 }
 
 float DistanceSquaredToSegment(
@@ -273,27 +304,42 @@ void DrawObserverWorldline(
     const Palette& palette)
 {
     const VisibleWorldBounds bounds = ComputeVisibleWorldBounds(rect, viewState);
-    const ImVec2 lineStart = ObserverToScreen(rect, viewState, observer, bounds.tMin);
-    const ImVec2 lineEnd = ObserverToScreen(rect, viewState, observer, bounds.tMax);
     const ImVec4& toneColor = ResolveToneColor(palette, observer.tone);
     const ImU32 observerColor = rhv::ui::ToU32(toneColor, isSelected ? 0.95f : 0.70f);
+    constexpr int sampleCount = 88;
 
     if (isSelected)
     {
-        drawList->AddLine(
-            lineStart,
-            lineEnd,
-            rhv::ui::ToU32(palette.activeText, 0.30f),
-            4.2f);
+        ImVec2 previousGlowPoint = ObserverToScreen(rect, viewState, observer, bounds.tMin);
+        for (int index = 1; index <= sampleCount; ++index)
+        {
+            const double interpolation = static_cast<double>(index) / static_cast<double>(sampleCount);
+            const double coordinateTime = bounds.tMin + ((bounds.tMax - bounds.tMin) * interpolation);
+            const ImVec2 currentGlowPoint = ObserverToScreen(rect, viewState, observer, coordinateTime);
+            drawList->AddLine(
+                previousGlowPoint,
+                currentGlowPoint,
+                rhv::ui::ToU32(palette.activeText, 0.30f),
+                4.2f);
+            previousGlowPoint = currentGlowPoint;
+        }
     }
 
-    drawList->AddLine(
-        lineStart,
-        lineEnd,
-        observerColor,
-        isSelected ? 2.2f : 1.4f);
+    ImVec2 previousPoint = ObserverToScreen(rect, viewState, observer, bounds.tMin);
+    for (int index = 1; index <= sampleCount; ++index)
+    {
+        const double interpolation = static_cast<double>(index) / static_cast<double>(sampleCount);
+        const double coordinateTime = bounds.tMin + ((bounds.tMax - bounds.tMin) * interpolation);
+        const ImVec2 currentPoint = ObserverToScreen(rect, viewState, observer, coordinateTime);
+        drawList->AddLine(
+            previousPoint,
+            currentPoint,
+            observerColor,
+            isSelected ? 2.2f : 1.4f);
+        previousPoint = currentPoint;
+    }
 
-    const ImVec2 tZeroAnchor = ObserverToScreen(rect, viewState, observer, 0.0);
+    const ImVec2 tZeroAnchor = ObserverToScreen(rect, viewState, observer, observer.referenceCoordinateTime);
     if (tZeroAnchor.y >= rect.min.y && tZeroAnchor.y <= rect.max.y)
     {
         drawList->AddCircleFilled(
@@ -316,6 +362,63 @@ void DrawObserverWorldline(
         observer.observerId.c_str());
 }
 
+void DrawPastHorizonGuide(
+    ImDrawList* drawList,
+    const CanvasRect& rect,
+    const MinkowskiViewState& viewState,
+    const InertialObserver& observer,
+    const Palette& palette)
+{
+    if (!rhv::core::HasPastHorizonGuide(observer))
+    {
+        return;
+    }
+
+    const VisibleWorldBounds bounds = ComputeVisibleWorldBounds(rect, viewState);
+    constexpr int sampleCount = 36;
+    const ImU32 horizonColor = rhv::ui::ToU32(palette.warningText, 0.55f);
+    const float dashFraction = 0.56f;
+
+    ImVec2 previousPoint = WorldToScreen(
+        rect,
+        viewState,
+        rhv::core::ComputePastHorizonPosition(observer, bounds.tMin),
+        bounds.tMin);
+
+    for (int index = 1; index <= sampleCount; ++index)
+    {
+        const double interpolation = static_cast<double>(index) / static_cast<double>(sampleCount);
+        const double coordinateTime = bounds.tMin + ((bounds.tMax - bounds.tMin) * interpolation);
+        const ImVec2 currentPoint = WorldToScreen(
+            rect,
+            viewState,
+            rhv::core::ComputePastHorizonPosition(observer, coordinateTime),
+            coordinateTime);
+
+        const double previousInterpolation = static_cast<double>(index - 1) / static_cast<double>(sampleCount);
+        const bool drawDash =
+            (interpolation - previousInterpolation) <= dashFraction / static_cast<double>(sampleCount) &&
+            (index % 2 == 1);
+        if (drawDash)
+        {
+            drawList->AddLine(previousPoint, currentPoint, horizonColor, 1.3f);
+        }
+
+        previousPoint = currentPoint;
+    }
+
+    const double labelTime = std::clamp(observer.referenceCoordinateTime + 1.6, bounds.tMin + 0.4, bounds.tMax - 0.4);
+    const ImVec2 labelAnchor = WorldToScreen(
+        rect,
+        viewState,
+        rhv::core::ComputePastHorizonPosition(observer, labelTime),
+        labelTime);
+    drawList->AddText(
+        ImVec2(labelAnchor.x + 8.0f, labelAnchor.y - 14.0f),
+        rhv::ui::ToU32(palette.warningText, 0.82f),
+        "HORIZON GUIDE");
+}
+
 void DrawProperTimeSampleSegment(
     ImDrawList* drawList,
     const CanvasRect& rect,
@@ -324,20 +427,31 @@ void DrawProperTimeSampleSegment(
     const rhv::models::ProperTimeSampleWindow& sampleWindow,
     const Palette& palette)
 {
-    const ImVec2 segmentStart = ObserverToScreen(rect, viewState, observer, sampleWindow.coordinateTimeStart);
-    const ImVec2 segmentEnd = ObserverToScreen(rect, viewState, observer, sampleWindow.coordinateTimeEnd);
     const ImU32 sampleColor = rhv::ui::ToU32(palette.activeText, 0.92f);
+    constexpr int sampleCount = 32;
+    ImVec2 segmentStart = ObserverToScreen(rect, viewState, observer, sampleWindow.coordinateTimeStart);
+    ImVec2 previousPoint = segmentStart;
+    const double sampleDuration = sampleWindow.coordinateTimeEnd - sampleWindow.coordinateTimeStart;
 
-    drawList->AddLine(
-        segmentStart,
-        segmentEnd,
-        rhv::ui::ToU32(palette.activeText, 0.24f),
-        5.0f);
-    drawList->AddLine(
-        segmentStart,
-        segmentEnd,
-        sampleColor,
-        2.4f);
+    for (int index = 1; index <= sampleCount; ++index)
+    {
+        const double interpolation = static_cast<double>(index) / static_cast<double>(sampleCount);
+        const double coordinateTime = sampleWindow.coordinateTimeStart + (sampleDuration * interpolation);
+        const ImVec2 currentPoint = ObserverToScreen(rect, viewState, observer, coordinateTime);
+        drawList->AddLine(
+            previousPoint,
+            currentPoint,
+            rhv::ui::ToU32(palette.activeText, 0.24f),
+            5.0f);
+        drawList->AddLine(
+            previousPoint,
+            currentPoint,
+            sampleColor,
+            2.4f);
+        previousPoint = currentPoint;
+    }
+
+    const ImVec2 segmentEnd = previousPoint;
 
     drawList->AddCircleFilled(
         segmentStart,
@@ -549,9 +663,12 @@ bool HandleObserverSelection(
 
     for (std::size_t index = 0; index < scene.observers.size(); ++index)
     {
-        const ImVec2 lineStart = ObserverToScreen(rect, viewState, scene.observers[index], bounds.tMin);
-        const ImVec2 lineEnd = ObserverToScreen(rect, viewState, scene.observers[index], bounds.tMax);
-        const float distanceSquared = DistanceSquaredToSegment(mousePosition, lineStart, lineEnd);
+        const float distanceSquared = ComputeObserverScreenDistanceSquared(
+            rect,
+            viewState,
+            scene.observers[index],
+            bounds,
+            mousePosition);
 
         if (distanceSquared < bestDistanceSquared)
         {
@@ -677,6 +794,12 @@ MinkowskiRenderResult DrawMinkowskiDiagram(
             index == viewState.selectedObserverIndex,
             palette);
     }
+    DrawPastHorizonGuide(
+        drawList,
+        rect,
+        viewState,
+        scene.observers[viewState.selectedObserverIndex],
+        palette);
     DrawProperTimeSampleSegment(
         drawList,
         rect,

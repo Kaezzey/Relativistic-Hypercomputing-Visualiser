@@ -1,12 +1,12 @@
 #include "core/ProperTime.h"
+#include "core/ObserverMotion.h"
 
-#include <algorithm>
 #include <cmath>
 
 namespace rhv::core
 {
 ProperTimeSample ComputeProperTimeSample(
-    const models::InertialObserver& observer,
+    const models::ObserverWorldline& observer,
     const models::ProperTimeSampleWindow& sampleWindow)
 {
     ProperTimeSample sample{};
@@ -14,12 +14,21 @@ ProperTimeSample ComputeProperTimeSample(
     sample.coordinateTimeEnd = sampleWindow.coordinateTimeEnd;
     sample.coordinateDelta = sample.coordinateTimeEnd - sample.coordinateTimeStart;
 
-    const double speedSquared = std::clamp(observer.velocity * observer.velocity, 0.0, 0.999999);
-    const double properTimeRate = std::sqrt(1.0 - speedSquared);
+    if (UsesAcceleratedMotion(observer))
+    {
+        const double acceleration = observer.properAcceleration;
+        const double scaledStart = acceleration * (sample.coordinateTimeStart - observer.referenceCoordinateTime);
+        const double scaledEnd = acceleration * (sample.coordinateTimeEnd - observer.referenceCoordinateTime);
+        sample.properTimeDelta = (std::asinh(scaledEnd) - std::asinh(scaledStart)) / acceleration;
+    }
+    else
+    {
+        const double speedSquared = observer.velocity * observer.velocity;
+        sample.properTimeDelta = sample.coordinateDelta * std::sqrt(1.0 - speedSquared);
+    }
 
-    sample.properTimeRate = properTimeRate;
-    sample.properTimeDelta = sample.coordinateDelta * properTimeRate;
-    sample.lorentzGamma = 1.0 / properTimeRate;
+    sample.properTimeRate = sample.properTimeDelta / sample.coordinateDelta;
+    sample.lorentzGamma = 1.0 / sample.properTimeRate;
 
     return sample;
 }

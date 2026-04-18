@@ -1,5 +1,6 @@
 #include "app/Application.h"
 
+#include "render3d/SpatialViewportRenderer.h"
 #include "ui/HybridScreen.h"
 #include "ui/ScreenEffects.h"
 #include "ui/Theme.h"
@@ -175,6 +176,8 @@ void Application::RenderFrame()
 
 void Application::Shutdown()
 {
+    rhv::render3d::ShutdownSpatialViewportRenderer();
+
     if (imguiInitialized_)
     {
         ImGui_ImplOpenGL3_Shutdown();

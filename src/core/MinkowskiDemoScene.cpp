@@ -8,7 +8,7 @@ models::MinkowskiDiagramScene BuildMinkowskiDemoScene()
     scene.modelName = "MINKOWSKI DEMO / FLAT SPACETIME";
     scene.unitConvention = "UNITS C = 1 / X AND T SHARE SCALE";
     scene.simplificationNote =
-        "Toy model: 1+1 dimensional flat spacetime only. No acceleration, curvature, or 3D optical effects are included.";
+        "Toy model: 1+1 dimensional flat spacetime only. Accelerated motion uses a pedagogical Rindler-style guide, not full GR curvature.";
     scene.defaultSelectedEventIndex = 0;
     scene.defaultSelectedObserverIndex = 0;
     scene.properTimeWindow = {
@@ -54,24 +54,33 @@ models::MinkowskiDiagramScene BuildMinkowskiDemoScene()
             "Null-separated in the past. This lies on a past light-speed path for O0."},
     };
     scene.observers = {
-        models::InertialObserver{
+        models::ObserverWorldline{
             "OBSERVER A",
+            models::ObserverMotionModel::Inertial,
+            0.0,
+            0.0,
             0.0,
             0.0,
             models::Tone::Active,
             "Reference inertial observer. Its worldline is vertical because position stays fixed while coordinate time advances."},
-        models::InertialObserver{
+        models::ObserverWorldline{
             "OBSERVER B",
+            models::ObserverMotionModel::Inertial,
             -2.6,
             0.35,
+            0.0,
+            0.0,
             models::Tone::Structural,
             "Inertial observer moving toward positive X at constant speed. In this toy model the worldline is a straight tilted trace."},
-        models::InertialObserver{
+        models::ObserverWorldline{
             "OBSERVER C",
-            2.8,
-            -0.50,
+            models::ObserverMotionModel::Accelerated,
+            1.9,
+            0.0,
+            0.60,
+            0.0,
             models::Tone::Warning,
-            "Inertial observer moving toward negative X. The steeper tilt still remains slower than light because |v| < 1."},
+            "Pedagogical uniformly accelerated observer. The curved worldline and dashed horizon guide are flat-spacetime teaching constructs, not a black-hole model."},
     };
 
     return scene;

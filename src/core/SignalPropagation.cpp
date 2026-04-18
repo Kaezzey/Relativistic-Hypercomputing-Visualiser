@@ -1,7 +1,7 @@
 #include "core/SignalPropagation.h"
+#include "core/ObserverMotion.h"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <limits>
 
@@ -9,13 +9,8 @@ namespace
 {
 constexpr double kNullTolerance = 1.0e-5;
 
-double ComputeObserverPosition(const rhv::models::InertialObserver& observer, const double coordinateTime)
-{
-    return observer.spatialIntercept + (observer.velocity * coordinateTime);
-}
-
 bool TrySolveObserverReception(
-    const rhv::models::InertialObserver& observer,
+    const rhv::models::ObserverWorldline& observer,
     const double transmitTime,
     const double transmitX,
     const rhv::core::SignalDirection direction,
@@ -23,22 +18,75 @@ bool TrySolveObserverReception(
     double& receiveX)
 {
     const double signalSlope = direction == rhv::core::SignalDirection::PositiveX ? 1.0 : -1.0;
-    const double denominator = signalSlope - observer.velocity;
-    if (std::abs(denominator) <= kNullTolerance)
+    const auto deltaFunction = [&](const double coordinateTime) {
+        const double observerX = rhv::core::ComputeObserverPosition(observer, coordinateTime);
+        const double signalX = transmitX + (signalSlope * (coordinateTime - transmitTime));
+        return observerX - signalX;
+    };
+
+    constexpr double searchHorizon = 24.0;
+    constexpr int searchSteps = 720;
+    double previousTime = transmitTime + 1.0e-4;
+    double previousDelta = deltaFunction(previousTime);
+    if (std::abs(previousDelta) <= kNullTolerance)
     {
-        return false;
+        receiveTime = previousTime;
+        receiveX = rhv::core::ComputeObserverPosition(observer, receiveTime);
+        return true;
     }
 
-    const double solvedTime =
-        (observer.spatialIntercept - transmitX + (signalSlope * transmitTime)) / denominator;
-    if (solvedTime <= transmitTime + kNullTolerance)
+    for (int step = 1; step <= searchSteps; ++step)
     {
-        return false;
+        const double currentTime =
+            transmitTime + (searchHorizon * static_cast<double>(step) / static_cast<double>(searchSteps));
+        const double currentDelta = deltaFunction(currentTime);
+
+        if (std::abs(currentDelta) <= kNullTolerance)
+        {
+            receiveTime = currentTime;
+            receiveX = rhv::core::ComputeObserverPosition(observer, receiveTime);
+            return true;
+        }
+
+        if ((previousDelta < 0.0 && currentDelta > 0.0) || (previousDelta > 0.0 && currentDelta < 0.0))
+        {
+            double lowerTime = previousTime;
+            double upperTime = currentTime;
+            double lowerDelta = previousDelta;
+
+            for (int iteration = 0; iteration < 48; ++iteration)
+            {
+                const double midpointTime = (lowerTime + upperTime) * 0.5;
+                const double midpointDelta = deltaFunction(midpointTime);
+
+                if (std::abs(midpointDelta) <= kNullTolerance)
+                {
+                    receiveTime = midpointTime;
+                    receiveX = rhv::core::ComputeObserverPosition(observer, receiveTime);
+                    return true;
+                }
+
+                if ((lowerDelta < 0.0 && midpointDelta > 0.0) || (lowerDelta > 0.0 && midpointDelta < 0.0))
+                {
+                    upperTime = midpointTime;
+                }
+                else
+                {
+                    lowerTime = midpointTime;
+                    lowerDelta = midpointDelta;
+                }
+            }
+
+            receiveTime = (lowerTime + upperTime) * 0.5;
+            receiveX = rhv::core::ComputeObserverPosition(observer, receiveTime);
+            return true;
+        }
+
+        previousTime = currentTime;
+        previousDelta = currentDelta;
     }
 
-    receiveTime = solvedTime;
-    receiveX = ComputeObserverPosition(observer, solvedTime);
-    return true;
+    return false;
 }
 }  // namespace
 

@@ -1,15 +1,17 @@
 #include "ui/HybridScreen.h"
 
 #include "core/MinkowskiDemoScene.h"
+#include "core/ObserverMotion.h"
 #include "core/OperationalStateBuilder.h"
 #include "core/ProperTime.h"
 #include "core/SignalPropagation.h"
 #include "models/OperationalState.h"
+#include "models/SpatialViewState.h"
 #include "render2d/MinkowskiDiagramRenderer.h"
+#include "render3d/SpatialViewportRenderer.h"
 #include "ui/BootPanel.h"
 #include "ui/HybridLayout.h"
 #include "ui/PanelFrame.h"
-#include "ui/SchematicTelemetryPanel.h"
 #include "ui/Theme.h"
 
 #include <imgui.h>
@@ -91,6 +93,14 @@ Tone ResolveEventSignalTone(const rhv::core::EventSignalState state)
 
 std::string FormatWorldlineEquation(const InertialObserver& observer)
 {
+    if (rhv::core::UsesAcceleratedMotion(observer))
+    {
+        std::ostringstream stream;
+        stream << std::fixed << std::setprecision(2)
+               << "ACCEL / X0=" << observer.spatialIntercept
+               << " / A=" << observer.properAcceleration;
+        return stream.str();
+    }
     std::ostringstream stream;
     stream << std::fixed << std::setprecision(2)
            << "X=" << observer.spatialIntercept
@@ -102,6 +112,14 @@ std::string FormatWorldlineEquation(const InertialObserver& observer)
 
 std::string FormatVelocityLabel(const InertialObserver& observer)
 {
+    if (rhv::core::UsesAcceleratedMotion(observer))
+    {
+        std::ostringstream stream;
+        stream << std::fixed << std::setprecision(2)
+               << "A=" << (observer.properAcceleration >= 0.0 ? "+" : "")
+               << observer.properAcceleration << " / V VAR";
+        return stream.str();
+    }
     std::ostringstream stream;
     stream << std::fixed << std::setprecision(2)
            << "V=" << (observer.velocity >= 0.0 ? "+" : "") << observer.velocity << " C";
@@ -285,6 +303,10 @@ void DrawCausalSelectionSummary(
     const rhv::core::ProperTimeSample& selectedObserverSample,
     const rhv::core::SignalPropagationReport& signalReport)
 {
+    const bool horizonShadow =
+        rhv::core::UsesAcceleratedMotion(selectedObserver) &&
+        rhv::core::IsEventBeyondPastHorizon(selectedObserver, selectedEvent);
+
     if (ImGui::BeginTable(
             "causal_selection_summary",
             2,
@@ -333,8 +355,11 @@ void DrawCausalSelectionSummary(
 
     const std::string txChip = "NULL TX";
     const std::string txTimeChip = "TX T=" + TruncateForPanel(FormatTransmitOriginLabel(signalReport), 16U);
-    const std::string eventChip = FormatEventLinkChip(signalReport.eventLink);
+    const std::string eventChip = horizonShadow ? "HORIZON SHADOW" : FormatEventLinkChip(signalReport.eventLink);
     const std::string observerChip = "OBS RX " + std::to_string(signalReport.validObserverLinkCount);
+    const ImVec4 eventChipColor = horizonShadow
+        ? palette.warningText
+        : ResolveToneColor(palette, ResolveEventSignalTone(signalReport.eventLink.state));
 
     rhv::ui::DrawLabelChip(txChip.c_str(), palette.warningText, ThemeMode::TerminalBase);
     ImGui::SameLine();
@@ -342,13 +367,22 @@ void DrawCausalSelectionSummary(
     ImGui::SameLine();
     rhv::ui::DrawLabelChip(
         eventChip.c_str(),
-        ResolveToneColor(palette, ResolveEventSignalTone(signalReport.eventLink.state)),
+        eventChipColor,
         ThemeMode::TerminalBase);
     ImGui::SameLine();
     rhv::ui::DrawLabelChip(observerChip.c_str(), palette.activeText, ThemeMode::TerminalBase);
 
+    if (rhv::core::UsesAcceleratedMotion(selectedObserver))
+    {
+        ImGui::SameLine();
+        rhv::ui::DrawLabelChip("HORIZON GUIDE", palette.warningText, ThemeMode::TerminalBase);
+    }
+
     ImGui::PushStyleColor(ImGuiCol_Text, palette.structuralText);
-    ImGui::TextUnformatted(TruncateForPanel(FormatSignalNote(selectedEvent.label, signalReport.eventLink), 96U).c_str());
+    const std::string noteText = horizonShadow
+        ? selectedEvent.label + " lies behind the selected observer's past horizon guide."
+        : FormatSignalNote(selectedEvent.label, signalReport.eventLink);
+    ImGui::TextUnformatted(TruncateForPanel(noteText, 96U).c_str());
     ImGui::PopStyleColor();
 }
 
@@ -359,13 +393,17 @@ void DrawCausalViewPanel(
 {
     const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
     rhv::render2d::EnsureViewState(scene, viewState);
+    const InertialObserver& activeObserver = scene.observers[viewState.selectedObserverIndex];
+    const bool accelMode = rhv::core::UsesAcceleratedMotion(activeObserver);
 
     rhv::ui::DrawStatusRow("VIEW MODE", operationalState.causalViewMode, palette.activeText, 116.0f);
     rhv::ui::DrawStatusRow("CAUSAL STATUS", operationalState.causalStatus, palette.warningText, 116.0f);
     rhv::ui::DrawStatusRow("UNITS", scene.unitConvention, palette.bodyText, 116.0f);
     rhv::ui::DrawStatusRow(
         "MODEL WARN",
-        "1+1 FLAT ONLY / NO ACCEL / NO CURVATURE / NO 3D OPTICS",
+        accelMode
+            ? "ACCEL TRACE IS PEDAGOGICAL / HORIZON GUIDE IS FLAT-SPACETIME INTUITION ONLY"
+            : "1+1 FLAT ONLY / NO ACCEL / NO CURVATURE / NO 3D OPTICS",
         palette.warningText,
         116.0f);
 
@@ -375,7 +413,7 @@ void DrawCausalViewPanel(
     ImGui::SameLine();
     rhv::ui::DrawLabelChip("LIGHT CONE", palette.warningText, ThemeMode::TerminalBase);
     ImGui::SameLine();
-    rhv::ui::DrawLabelChip("TOY MODEL", palette.structuralText, ThemeMode::TerminalBase);
+    rhv::ui::DrawLabelChip(accelMode ? "ACCEL TOY" : "TOY MODEL", palette.structuralText, ThemeMode::TerminalBase);
 
     const float canvasHeight = std::max(0.0f, ImGui::GetContentRegionAvail().y - 104.0f);
     const rhv::render2d::MinkowskiRenderResult renderResult =
@@ -398,10 +436,80 @@ void DrawCausalViewPanel(
         signalReport);
 }
 
-void DrawSpatialViewPanel(const FrameVisualState& frameState, const OperationalState& operationalState)
+std::string FormatDegreesLabel(const float degrees)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(1) << degrees << " DEG";
+    return stream.str();
+}
+
+std::string FormatRangeLabel(const float distance)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2) << "R=" << distance;
+    return stream.str();
+}
+
+std::string FormatSpatialSnapshotLabel(const float coordinateTime)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2) << "T=" << coordinateTime;
+    return stream.str();
+}
+
+std::string FormatSpatialCoordinateLabel(
+    const InertialObserver& observer,
+    const float coordinateTime)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2)
+           << "X=" << rhv::core::ComputeObserverPosition(observer, coordinateTime)
+           << " / Z=0.00";
+    return stream.str();
+}
+
+std::string FormatSpatialMotionLabel(
+    const InertialObserver& observer,
+    const float coordinateTime)
+{
+    if (rhv::core::UsesAcceleratedMotion(observer))
+    {
+        std::ostringstream stream;
+        stream << std::fixed << std::setprecision(2)
+               << "ACCEL TOY / V=" << rhv::core::ComputeObserverVelocity(observer, coordinateTime);
+        return stream.str();
+    }
+
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2) << "INERTIAL / V=" << observer.velocity;
+    return stream.str();
+}
+
+std::string FormatSpatialPickLabel(
+    const InertialObserver& observer,
+    const rhv::render3d::SpatialViewportRenderResult& renderResult)
+{
+    if (renderResult.isInspectorLocked)
+    {
+        return observer.observerId + " / LOCAL LOCK";
+    }
+
+    if (renderResult.hoveredObserverIndex >= 0)
+    {
+        return observer.observerId + " / HOVER TRACK";
+    }
+
+    return observer.observerId + " / CAUSAL FEED";
+}
+
+void DrawSpatialViewPanel(
+    const FrameVisualState& frameState,
+    const rhv::models::MinkowskiDiagramScene& scene,
+    const std::size_t selectedObserverIndex,
+    const OperationalState& operationalState,
+    rhv::models::SpatialViewState& spatialViewState)
 {
     const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
-    const Palette& schematicPalette = rhv::ui::GetPalette(ThemeMode::SchematicTelemetry);
 
     rhv::ui::DrawStatusRow("VIEW MODE", operationalState.spatialViewMode, terminalPalette.warningText, 116.0f);
     rhv::ui::DrawStatusRow("REGION STATE", operationalState.spatialStatus, terminalPalette.structuralText, 116.0f);
@@ -409,17 +517,67 @@ void DrawSpatialViewPanel(const FrameVisualState& frameState, const OperationalS
 
     rhv::ui::DrawWrappedNote(
         "MODEL WARN",
-        "The insert below is schematic telemetry only. It is not a 3D renderer, not a black-hole region model, and not an optical lensing simulation.",
+        "Spatial observer snapshot only. Placement is sampled at a fixed coordinate time and shown with emissive teaching proxies, not full worldtubes, black-hole regions, or lensing.",
         ThemeMode::TerminalBase);
 
-    const ImVec2 canvasSize(
-        ImGui::GetContentRegionAvail().x,
-        std::max(ImGui::GetContentRegionAvail().y - 44.0f, 210.0f));
-    rhv::ui::DrawSchematicTelemetryCanvas(frameState, canvasSize, "spatial_view_insert");
+    const float canvasHeight = std::max(150.0f, ImGui::GetContentRegionAvail().y - 60.0f);
+    const rhv::render3d::SpatialViewportRenderResult renderResult =
+        rhv::render3d::DrawSpatialViewport(
+            frameState,
+            scene,
+            selectedObserverIndex,
+            spatialViewState,
+            ImVec2(ImGui::GetContentRegionAvail().x, canvasHeight),
+            "spatial_view_canvas");
 
-    rhv::ui::DrawLabelChip("SCHEMATIC INSERT", schematicPalette.accentPrimary, ThemeMode::SchematicTelemetry);
+    const std::size_t displayObserverIndex = static_cast<std::size_t>(
+        std::clamp(
+            renderResult.displayObserverIndex,
+            0,
+            static_cast<int>(scene.observers.size() - 1U)));
+    const InertialObserver& displayObserver = scene.observers[displayObserverIndex];
+
+    rhv::ui::DrawLabelChip("OBSERVER MARKERS", terminalPalette.activeText, ThemeMode::TerminalBase);
     ImGui::SameLine();
-    rhv::ui::DrawLabelChip("3D PATH RESERVED", terminalPalette.warningText, ThemeMode::TerminalBase);
+    rhv::ui::DrawLabelChip("EMISSIVE GRID", terminalPalette.warningText, ThemeMode::TerminalBase);
+    ImGui::SameLine();
+    rhv::ui::DrawLabelChip(
+        renderResult.isInspectorLocked ? "LOCAL LOCK" : "CAUSAL FEED",
+        renderResult.isInspectorLocked ? terminalPalette.warningText : terminalPalette.structuralText,
+        ThemeMode::TerminalBase);
+
+    rhv::ui::DrawStatusRow(
+        "CAMERA",
+        renderResult.isHovered ? "HOVERED / INPUT LIVE" : "IDLE / HOVER TO ARM",
+        renderResult.isHovered ? terminalPalette.activeText : terminalPalette.structuralText,
+        116.0f);
+    rhv::ui::DrawStatusRow(
+        "ORBIT",
+        "YAW " + FormatDegreesLabel(renderResult.yawDegrees) +
+            " / PITCH " + FormatDegreesLabel(renderResult.pitchDegrees),
+        terminalPalette.bodyText,
+        116.0f);
+    rhv::ui::DrawStatusRow(
+        "RANGE",
+        FormatRangeLabel(renderResult.cameraDistance),
+        terminalPalette.warningText,
+        116.0f);
+    rhv::ui::DrawStatusRow(
+        "PICK",
+        FormatSpatialPickLabel(displayObserver, renderResult),
+        ResolveToneColor(terminalPalette, displayObserver.tone),
+        116.0f);
+    rhv::ui::DrawStatusRow(
+        "SNAPSHOT",
+        FormatSpatialSnapshotLabel(renderResult.snapshotCoordinateTime) +
+            " / " + FormatSpatialCoordinateLabel(displayObserver, renderResult.snapshotCoordinateTime),
+        terminalPalette.bodyText,
+        116.0f);
+    rhv::ui::DrawStatusRow(
+        "PLACEMENT",
+        FormatSpatialMotionLabel(displayObserver, renderResult.snapshotCoordinateTime),
+        terminalPalette.structuralText,
+        116.0f);
 }
 
 bool DrawObserverSlot(const ObserverTelemetry& observer)
@@ -471,7 +629,7 @@ bool DrawObserverSlot(const ObserverTelemetry& observer)
 
         rhv::ui::DrawStatusRow("WORLDLINE", observer.worldlineState, observerColor, 92.0f);
         rhv::ui::DrawStatusRow("VELOCITY", observer.velocityState, palette.warningText, 92.0f);
-        rhv::ui::DrawStatusRow("WINDOW", observer.windowState, palette.structuralText, 92.0f);
+        rhv::ui::DrawStatusRow("MOTION", observer.windowState, palette.structuralText, 92.0f);
         rhv::ui::DrawStatusRow("DTAU", observer.properTimeState, palette.activeText, 92.0f);
         rhv::ui::DrawStatusRow("LINK", observer.linkState, palette.bodyText, 92.0f);
     }
@@ -625,6 +783,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
     const HybridScreenLayout layout = BuildHybridScreenLayout(viewport->Pos, viewport->Size);
     static const rhv::models::MinkowskiDiagramScene scene = rhv::core::BuildMinkowskiDemoScene();
     static rhv::render2d::MinkowskiViewState viewState{};
+    static rhv::models::SpatialViewState spatialViewState{};
     rhv::render2d::EnsureViewState(scene, viewState);
 
     OperationalState operationalState = rhv::core::BuildOperationalState(
@@ -690,9 +849,15 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
             "SPATIAL VIEW",
             "3D REGION",
             ThemeMode::TerminalBase,
-            layout.spatialView))
+            layout.spatialView,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
     {
-        DrawSpatialViewPanel(frameState, operationalState);
+        DrawSpatialViewPanel(
+            frameState,
+            scene,
+            viewState.selectedObserverIndex,
+            operationalState,
+            spatialViewState);
     }
     EndManagedPanel();
 
