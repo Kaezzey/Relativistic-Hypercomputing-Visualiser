@@ -17,6 +17,8 @@ set(RHV_SOURCES
     src/app/Application.cpp
     src/core/MinkowskiDemoScene.cpp
     src/core/OperationalStateBuilder.cpp
+    src/core/ProperTime.cpp
+    src/core/SignalPropagation.cpp
     src/render2d/MinkowskiDiagramRenderer.cpp
     src/ui/BootPanel.cpp
     src/ui/HybridLayout.cpp
@@ -35,6 +37,8 @@ set(RHV_HEADERS
     src/models/OperationalState.h
     src/core/MinkowskiDemoScene.h
     src/core/OperationalStateBuilder.h
+    src/core/ProperTime.h
+    src/core/SignalPropagation.h
     src/render2d/MinkowskiDiagramRenderer.h
     src/ui/BootPanel.h
     src/ui/HybridLayout.h

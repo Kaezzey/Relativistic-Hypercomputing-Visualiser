@@ -29,13 +29,17 @@ struct StatusBadge
     bool useSchematicAccent = false;
 };
 
-struct ObserverPlaceholder
+struct ObserverTelemetry
 {
     std::string observerId;
-    std::string assignmentState;
-    std::string localFrameState;
-    std::string clockState;
+    std::string trackState;
+    std::string worldlineState;
+    std::string velocityState;
+    std::string windowState;
+    std::string properTimeState;
+    std::string linkState;
     Tone tone = Tone::Structural;
+    bool isSelected = false;
 };
 
 struct EventLogEntry
@@ -69,7 +73,7 @@ struct OperationalState
     std::string spatialStatus;
     std::string lensState;
     std::array<StatusBadge, 4> commandBadges;
-    std::array<ObserverPlaceholder, 3> observers;
+    std::array<ObserverTelemetry, 3> observers;
     std::array<EventLogEntry, 6> eventLog;
     std::array<SymbolConvention, 5> symbolConventions;
 };

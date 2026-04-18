@@ -1,5 +1,6 @@
 #include "render2d/MinkowskiDiagramRenderer.h"
 
+#include "core/SignalPropagation.h"
 #include "ui/Theme.h"
 
 #include <imgui.h>
@@ -13,6 +14,7 @@
 namespace
 {
 using rhv::models::MinkowskiDiagramScene;
+using rhv::models::InertialObserver;
 using rhv::models::SpacetimeEvent;
 using rhv::models::Tone;
 using rhv::render2d::CausalRelation;
@@ -47,6 +49,14 @@ struct CanvasRect
     {
         return ImVec2((min.x + max.x) * 0.5f, (min.y + max.y) * 0.5f);
     }
+};
+
+struct VisibleWorldBounds
+{
+    double xMin = 0.0;
+    double xMax = 0.0;
+    double tMin = 0.0;
+    double tMax = 0.0;
 };
 
 double ComputeVisibleGridStep(const float pixelsPerUnit)
@@ -89,6 +99,57 @@ ImVec2 ScreenToWorld(
         (worldOrigin.y - screenPosition.y) / viewState.pixelsPerUnit);
 }
 
+VisibleWorldBounds ComputeVisibleWorldBounds(
+    const CanvasRect& rect,
+    const MinkowskiViewState& viewState)
+{
+    const ImVec2 worldAtMin = ScreenToWorld(rect, viewState, rect.min);
+    const ImVec2 worldAtMax = ScreenToWorld(rect, viewState, rect.max);
+
+    return VisibleWorldBounds{
+        std::min(worldAtMin.x, worldAtMax.x),
+        std::max(worldAtMin.x, worldAtMax.x),
+        std::min(worldAtMin.y, worldAtMax.y),
+        std::max(worldAtMin.y, worldAtMax.y)};
+}
+
+ImVec2 ObserverToScreen(
+    const CanvasRect& rect,
+    const MinkowskiViewState& viewState,
+    const InertialObserver& observer,
+    const double coordinateTime)
+{
+    const double spatialX = observer.spatialIntercept + (observer.velocity * coordinateTime);
+    return WorldToScreen(rect, viewState, spatialX, coordinateTime);
+}
+
+float DistanceSquaredToSegment(
+    const ImVec2& point,
+    const ImVec2& segmentStart,
+    const ImVec2& segmentEnd)
+{
+    const float segmentX = segmentEnd.x - segmentStart.x;
+    const float segmentY = segmentEnd.y - segmentStart.y;
+    const float segmentLengthSquared = (segmentX * segmentX) + (segmentY * segmentY);
+
+    if (segmentLengthSquared <= std::numeric_limits<float>::epsilon())
+    {
+        const float dx = point.x - segmentStart.x;
+        const float dy = point.y - segmentStart.y;
+        return (dx * dx) + (dy * dy);
+    }
+
+    const float projection =
+        ((point.x - segmentStart.x) * segmentX + (point.y - segmentStart.y) * segmentY) /
+        segmentLengthSquared;
+    const float clampedProjection = std::clamp(projection, 0.0f, 1.0f);
+    const float closestX = segmentStart.x + (segmentX * clampedProjection);
+    const float closestY = segmentStart.y + (segmentY * clampedProjection);
+    const float dx = point.x - closestX;
+    const float dy = point.y - closestY;
+    return (dx * dx) + (dy * dy);
+}
+
 const ImVec4& ResolveToneColor(const Palette& palette, const Tone tone)
 {
     switch (tone)
@@ -112,17 +173,11 @@ void DrawGrid(
     const MinkowskiViewState& viewState,
     const Palette& palette)
 {
-    const ImVec2 worldAtMin = ScreenToWorld(rect, viewState, rect.min);
-    const ImVec2 worldAtMax = ScreenToWorld(rect, viewState, rect.max);
-
-    const double xMin = std::min(worldAtMin.x, worldAtMax.x);
-    const double xMax = std::max(worldAtMin.x, worldAtMax.x);
-    const double tMin = std::min(worldAtMin.y, worldAtMax.y);
-    const double tMax = std::max(worldAtMin.y, worldAtMax.y);
+    const VisibleWorldBounds bounds = ComputeVisibleWorldBounds(rect, viewState);
 
     const double gridStep = ComputeVisibleGridStep(viewState.pixelsPerUnit);
 
-    for (double x = std::floor(xMin / gridStep) * gridStep; x <= xMax + gridStep; x += gridStep)
+    for (double x = std::floor(bounds.xMin / gridStep) * gridStep; x <= bounds.xMax + gridStep; x += gridStep)
     {
         const float screenX = WorldToScreen(rect, viewState, x, 0.0).x;
         drawList->AddLine(
@@ -142,7 +197,7 @@ void DrawGrid(
         }
     }
 
-    for (double t = std::floor(tMin / gridStep) * gridStep; t <= tMax + gridStep; t += gridStep)
+    for (double t = std::floor(bounds.tMin / gridStep) * gridStep; t <= bounds.tMax + gridStep; t += gridStep)
     {
         const float screenY = WorldToScreen(rect, viewState, 0.0, t).y;
         drawList->AddLine(
@@ -209,6 +264,187 @@ void DrawLightCones(
     drawList->AddCircle(anchor, 12.0f, rhv::ui::ToU32(palette.warningText, 0.30f), 32, 1.0f);
 }
 
+void DrawObserverWorldline(
+    ImDrawList* drawList,
+    const CanvasRect& rect,
+    const MinkowskiViewState& viewState,
+    const InertialObserver& observer,
+    const bool isSelected,
+    const Palette& palette)
+{
+    const VisibleWorldBounds bounds = ComputeVisibleWorldBounds(rect, viewState);
+    const ImVec2 lineStart = ObserverToScreen(rect, viewState, observer, bounds.tMin);
+    const ImVec2 lineEnd = ObserverToScreen(rect, viewState, observer, bounds.tMax);
+    const ImVec4& toneColor = ResolveToneColor(palette, observer.tone);
+    const ImU32 observerColor = rhv::ui::ToU32(toneColor, isSelected ? 0.95f : 0.70f);
+
+    if (isSelected)
+    {
+        drawList->AddLine(
+            lineStart,
+            lineEnd,
+            rhv::ui::ToU32(palette.activeText, 0.30f),
+            4.2f);
+    }
+
+    drawList->AddLine(
+        lineStart,
+        lineEnd,
+        observerColor,
+        isSelected ? 2.2f : 1.4f);
+
+    const ImVec2 tZeroAnchor = ObserverToScreen(rect, viewState, observer, 0.0);
+    if (tZeroAnchor.y >= rect.min.y && tZeroAnchor.y <= rect.max.y)
+    {
+        drawList->AddCircleFilled(
+            tZeroAnchor,
+            isSelected ? 4.5f : 3.4f,
+            rhv::ui::ToU32(palette.viewportBackground, 0.92f));
+        drawList->AddCircle(
+            tZeroAnchor,
+            isSelected ? 6.0f : 4.6f,
+            observerColor,
+            24,
+            1.2f);
+    }
+
+    const double labelTime = std::clamp(1.2, bounds.tMin + 0.35, bounds.tMax - 0.35);
+    const ImVec2 labelAnchor = ObserverToScreen(rect, viewState, observer, labelTime);
+    drawList->AddText(
+        ImVec2(labelAnchor.x + 8.0f, labelAnchor.y - 12.0f),
+        observerColor,
+        observer.observerId.c_str());
+}
+
+void DrawProperTimeSampleSegment(
+    ImDrawList* drawList,
+    const CanvasRect& rect,
+    const MinkowskiViewState& viewState,
+    const InertialObserver& observer,
+    const rhv::models::ProperTimeSampleWindow& sampleWindow,
+    const Palette& palette)
+{
+    const ImVec2 segmentStart = ObserverToScreen(rect, viewState, observer, sampleWindow.coordinateTimeStart);
+    const ImVec2 segmentEnd = ObserverToScreen(rect, viewState, observer, sampleWindow.coordinateTimeEnd);
+    const ImU32 sampleColor = rhv::ui::ToU32(palette.activeText, 0.92f);
+
+    drawList->AddLine(
+        segmentStart,
+        segmentEnd,
+        rhv::ui::ToU32(palette.activeText, 0.24f),
+        5.0f);
+    drawList->AddLine(
+        segmentStart,
+        segmentEnd,
+        sampleColor,
+        2.4f);
+
+    drawList->AddCircleFilled(
+        segmentStart,
+        4.6f,
+        rhv::ui::ToU32(palette.viewportBackground, 0.95f));
+    drawList->AddCircle(
+        segmentStart,
+        6.6f,
+        sampleColor,
+        24,
+        1.2f);
+    drawList->AddCircleFilled(
+        segmentEnd,
+        4.6f,
+        rhv::ui::ToU32(palette.viewportBackground, 0.95f));
+    drawList->AddCircle(
+        segmentEnd,
+        6.6f,
+        sampleColor,
+        24,
+        1.2f);
+
+    const ImVec2 labelAnchor(
+        (segmentStart.x + segmentEnd.x) * 0.5f,
+        (segmentStart.y + segmentEnd.y) * 0.5f);
+    drawList->AddText(
+        ImVec2(labelAnchor.x + 8.0f, labelAnchor.y - 18.0f),
+        rhv::ui::ToU32(palette.activeText),
+        "DTAU SAMPLE");
+}
+
+void DrawSignalPropagationOverlay(
+    ImDrawList* drawList,
+    const CanvasRect& rect,
+    const MinkowskiViewState& viewState,
+    const rhv::core::SignalPropagationReport& signalReport,
+    const Palette& palette)
+{
+    const ImVec2 txAnchor = WorldToScreen(rect, viewState, signalReport.transmitX, signalReport.transmitTime);
+    const ImU32 transmitColor = rhv::ui::ToU32(palette.warningText, 0.95f);
+
+    drawList->AddCircleFilled(
+        txAnchor,
+        5.0f,
+        rhv::ui::ToU32(palette.viewportBackground, 0.95f));
+    drawList->AddCircle(
+        txAnchor,
+        7.4f,
+        transmitColor,
+        24,
+        1.3f);
+    drawList->AddText(
+        ImVec2(txAnchor.x + 8.0f, txAnchor.y - 16.0f),
+        transmitColor,
+        "TX");
+
+    for (const rhv::core::ObserverSignalLink& observerLink : signalReport.observerLinks)
+    {
+        if (observerLink.state != rhv::core::ObserverSignalState::LinkValid)
+        {
+            continue;
+        }
+
+        const ImVec2 receiveAnchor = WorldToScreen(rect, viewState, observerLink.receiveX, observerLink.receiveTime);
+        drawList->AddLine(
+            txAnchor,
+            receiveAnchor,
+            rhv::ui::ToU32(palette.warningText, 0.42f),
+            1.6f);
+        drawList->AddCircleFilled(
+            receiveAnchor,
+            4.2f,
+            rhv::ui::ToU32(palette.viewportBackground, 0.95f));
+        drawList->AddCircle(
+            receiveAnchor,
+            6.0f,
+            rhv::ui::ToU32(palette.activeText, 0.92f),
+            24,
+            1.2f);
+        drawList->AddText(
+            ImVec2(receiveAnchor.x + 6.0f, receiveAnchor.y - 14.0f),
+            rhv::ui::ToU32(palette.activeText),
+            "RX");
+    }
+
+    if (signalReport.eventLink.state == rhv::core::EventSignalState::LinkValid)
+    {
+        const ImVec2 eventAnchor = WorldToScreen(
+            rect,
+            viewState,
+            signalReport.eventLink.receiveX,
+            signalReport.eventLink.receiveTime);
+        drawList->AddLine(
+            txAnchor,
+            eventAnchor,
+            rhv::ui::ToU32(palette.warningText, 0.72f),
+            1.8f);
+        drawList->AddRect(
+            ImVec2(eventAnchor.x - 9.0f, eventAnchor.y - 9.0f),
+            ImVec2(eventAnchor.x + 9.0f, eventAnchor.y + 9.0f),
+            rhv::ui::ToU32(palette.warningText, 0.92f),
+            0.0f,
+            0,
+            1.1f);
+    }
+}
+
 void DrawEventMarker(
     ImDrawList* drawList,
     const CanvasRect& rect,
@@ -253,19 +489,20 @@ void DrawEventMarker(
         event.label.c_str());
 }
 
-void HandleSelection(
+bool HandleSelection(
     const MinkowskiDiagramScene& scene,
     const CanvasRect& rect,
     MinkowskiViewState& viewState)
 {
     if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left) || !ImGui::IsItemHovered())
     {
-        return;
+        return false;
     }
 
     const ImVec2 mousePosition = ImGui::GetIO().MousePos;
     float bestDistanceSquared = std::numeric_limits<float>::max();
     std::size_t bestIndex = viewState.selectedEventIndex;
+    bool wasHit = false;
 
     for (std::size_t index = 0; index < scene.events.size(); ++index)
     {
@@ -282,10 +519,54 @@ void HandleSelection(
         {
             bestDistanceSquared = distanceSquared;
             bestIndex = index;
+            wasHit = true;
         }
     }
 
-    viewState.selectedEventIndex = bestIndex;
+    if (wasHit)
+    {
+        viewState.selectedEventIndex = bestIndex;
+    }
+
+    return wasHit;
+}
+
+bool HandleObserverSelection(
+    const MinkowskiDiagramScene& scene,
+    const CanvasRect& rect,
+    MinkowskiViewState& viewState)
+{
+    if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left) || !ImGui::IsItemHovered())
+    {
+        return false;
+    }
+
+    const VisibleWorldBounds bounds = ComputeVisibleWorldBounds(rect, viewState);
+    const ImVec2 mousePosition = ImGui::GetIO().MousePos;
+    float bestDistanceSquared = 100.0f;
+    std::size_t bestIndex = viewState.selectedObserverIndex;
+    bool wasHit = false;
+
+    for (std::size_t index = 0; index < scene.observers.size(); ++index)
+    {
+        const ImVec2 lineStart = ObserverToScreen(rect, viewState, scene.observers[index], bounds.tMin);
+        const ImVec2 lineEnd = ObserverToScreen(rect, viewState, scene.observers[index], bounds.tMax);
+        const float distanceSquared = DistanceSquaredToSegment(mousePosition, lineStart, lineEnd);
+
+        if (distanceSquared < bestDistanceSquared)
+        {
+            bestDistanceSquared = distanceSquared;
+            bestIndex = index;
+            wasHit = true;
+        }
+    }
+
+    if (wasHit)
+    {
+        viewState.selectedObserverIndex = bestIndex;
+    }
+
+    return wasHit;
 }
 
 void HandlePanAndZoom(
@@ -330,12 +611,14 @@ void EnsureViewState(
     if (!viewState.isInitialized)
     {
         viewState.selectedEventIndex = std::min(scene.defaultSelectedEventIndex, scene.events.size() - 1U);
+        viewState.selectedObserverIndex = std::min(scene.defaultSelectedObserverIndex, scene.observers.size() - 1U);
         viewState.pixelsPerUnit = 64.0f;
         viewState.panOffset = ImVec2(0.0f, 0.0f);
         viewState.isInitialized = true;
     }
 
     viewState.selectedEventIndex = std::min(viewState.selectedEventIndex, scene.events.size() - 1U);
+    viewState.selectedObserverIndex = std::min(viewState.selectedObserverIndex, scene.observers.size() - 1U);
 }
 
 MinkowskiRenderResult DrawMinkowskiDiagram(
@@ -360,7 +643,17 @@ MinkowskiRenderResult DrawMinkowskiDiagram(
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
     HandlePanAndZoom(rect, viewState);
-    HandleSelection(scene, rect, viewState);
+    const bool eventWasSelected = HandleSelection(scene, rect, viewState);
+    if (!eventWasSelected)
+    {
+        HandleObserverSelection(scene, rect, viewState);
+    }
+
+    const rhv::core::SignalPropagationReport updatedSignalReport =
+        rhv::core::ComputeSignalPropagation(
+            scene,
+            viewState.selectedObserverIndex,
+            viewState.selectedEventIndex);
 
     drawList->AddRectFilled(
         rect.min,
@@ -374,6 +667,29 @@ MinkowskiRenderResult DrawMinkowskiDiagram(
     drawList->PushClipRect(rect.min, rect.max, true);
     DrawGrid(drawList, rect, viewState, palette);
     DrawAxesLabels(drawList, rect, palette);
+    for (std::size_t index = 0; index < scene.observers.size(); ++index)
+    {
+        DrawObserverWorldline(
+            drawList,
+            rect,
+            viewState,
+            scene.observers[index],
+            index == viewState.selectedObserverIndex,
+            palette);
+    }
+    DrawProperTimeSampleSegment(
+        drawList,
+        rect,
+        viewState,
+        scene.observers[viewState.selectedObserverIndex],
+        scene.properTimeWindow,
+        palette);
+    DrawSignalPropagationOverlay(
+        drawList,
+        rect,
+        viewState,
+        updatedSignalReport,
+        palette);
     DrawLightCones(
         drawList,
         rect,
@@ -404,6 +720,7 @@ MinkowskiRenderResult DrawMinkowskiDiagram(
 
     return MinkowskiRenderResult{
         viewState.selectedEventIndex,
+        viewState.selectedObserverIndex,
         viewState.pixelsPerUnit};
 }
 

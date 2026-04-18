@@ -31,12 +31,14 @@ struct MinkowskiViewState
     float pixelsPerUnit = 64.0f;
     ImVec2 panOffset = ImVec2(0.0f, 0.0f);
     std::size_t selectedEventIndex = 0;
+    std::size_t selectedObserverIndex = 0;
     bool isInitialized = false;
 };
 
 struct MinkowskiRenderResult
 {
     std::size_t selectedEventIndex = 0;
+    std::size_t selectedObserverIndex = 0;
     float pixelsPerUnit = 0.0f;
 };
 

@@ -2,6 +2,8 @@
 
 #include "core/MinkowskiDemoScene.h"
 #include "core/OperationalStateBuilder.h"
+#include "core/ProperTime.h"
+#include "core/SignalPropagation.h"
 #include "models/OperationalState.h"
 #include "render2d/MinkowskiDiagramRenderer.h"
 #include "ui/BootPanel.h"
@@ -14,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -24,7 +27,8 @@ using rhv::models::BootTelemetry;
 using rhv::models::EventLogEntry;
 using rhv::models::FrameVisualState;
 using rhv::ui::HybridScreenLayout;
-using rhv::models::ObserverPlaceholder;
+using rhv::models::InertialObserver;
+using rhv::models::ObserverTelemetry;
 using rhv::models::OperationalState;
 using rhv::ui::Palette;
 using rhv::models::StatusBadge;
@@ -67,6 +71,169 @@ Tone ResolveRelationTone(const rhv::render2d::CausalRelation relation)
     }
 
     return Tone::Structural;
+}
+
+Tone ResolveEventSignalTone(const rhv::core::EventSignalState state)
+{
+    switch (state)
+    {
+    case rhv::core::EventSignalState::TransmitOrigin:
+    case rhv::core::EventSignalState::LinkValid:
+        return Tone::Active;
+    case rhv::core::EventSignalState::FutureInterior:
+    case rhv::core::EventSignalState::Spacelike:
+    case rhv::core::EventSignalState::Past:
+        return Tone::Warning;
+    }
+
+    return Tone::Warning;
+}
+
+std::string FormatWorldlineEquation(const InertialObserver& observer)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2)
+           << "X=" << observer.spatialIntercept
+           << (observer.velocity >= 0.0 ? " + " : " - ")
+           << std::abs(observer.velocity)
+           << "T";
+    return stream.str();
+}
+
+std::string FormatVelocityLabel(const InertialObserver& observer)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2)
+           << "V=" << (observer.velocity >= 0.0 ? "+" : "") << observer.velocity << " C";
+    return stream.str();
+}
+
+std::string FormatProperTimeSummary(const rhv::core::ProperTimeSample& sample)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2)
+           << "DT=" << sample.coordinateDelta
+           << " / DTAU=" << sample.properTimeDelta;
+    return stream.str();
+}
+
+std::string FormatCoordinateDeltaLabel(const rhv::core::ProperTimeSample& sample)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2)
+           << "COORD DT " << sample.coordinateDelta;
+    return stream.str();
+}
+
+std::string FormatProperTimeDeltaLabel(const rhv::core::ProperTimeSample& sample)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2)
+           << "DTAU " << sample.properTimeDelta;
+    return stream.str();
+}
+
+std::string FormatProperTimeWindowLabel(const rhv::core::ProperTimeSample& sample)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(1)
+           << "T=" << sample.coordinateTimeStart
+           << " TO " << sample.coordinateTimeEnd;
+    return stream.str();
+}
+
+std::string FormatProperTimeComparison(
+    const rhv::core::ProperTimeSample& selectedSample,
+    const rhv::core::ProperTimeSample& referenceSample)
+{
+    std::ostringstream stream;
+    const double difference = selectedSample.properTimeDelta - referenceSample.properTimeDelta;
+    stream << std::fixed << std::setprecision(2)
+           << "REL TO OBS A "
+           << (difference >= 0.0 ? "+" : "")
+           << difference;
+    return stream.str();
+}
+
+std::string TruncateForPanel(const std::string& text, const std::size_t maxCharacters)
+{
+    if (text.size() <= maxCharacters)
+    {
+        return text;
+    }
+
+    return text.substr(0, maxCharacters - 3U) + "...";
+}
+
+std::string FormatTransmitOriginLabel(const rhv::core::SignalPropagationReport& signalReport)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2)
+           << "T=" << signalReport.transmitTime
+           << " / X=" << signalReport.transmitX;
+    return stream.str();
+}
+
+std::string FormatEventLinkState(const rhv::core::EventSignalLink& eventLink)
+{
+    switch (eventLink.state)
+    {
+    case rhv::core::EventSignalState::TransmitOrigin:
+        return "TX ORIGIN";
+    case rhv::core::EventSignalState::LinkValid:
+    {
+        std::ostringstream stream;
+        stream << std::fixed << std::setprecision(2)
+               << "LINK VALID / RX T=" << eventLink.receiveTime;
+        return stream.str();
+    }
+    case rhv::core::EventSignalState::FutureInterior:
+        return "CAUSAL ACCESS LOST / NULL MISS";
+    case rhv::core::EventSignalState::Spacelike:
+        return "CAUSAL ACCESS LOST / OUTSIDE CONE";
+    case rhv::core::EventSignalState::Past:
+        return "CAUSAL ACCESS LOST / TX LATE";
+    }
+
+    return "CAUSAL ACCESS LOST";
+}
+
+std::string FormatEventLinkChip(const rhv::core::EventSignalLink& eventLink)
+{
+    switch (eventLink.state)
+    {
+    case rhv::core::EventSignalState::TransmitOrigin:
+        return "EVENT TX ORIGIN";
+    case rhv::core::EventSignalState::LinkValid:
+        return "EVENT LINK VALID";
+    case rhv::core::EventSignalState::FutureInterior:
+    case rhv::core::EventSignalState::Spacelike:
+    case rhv::core::EventSignalState::Past:
+        return "CAUSAL ACCESS LOST";
+    }
+
+    return "CAUSAL ACCESS LOST";
+}
+
+std::string FormatSignalNote(
+    const std::string& eventLabel,
+    const rhv::core::EventSignalLink& eventLink)
+{
+    switch (eventLink.state)
+    {
+    case rhv::core::EventSignalState::TransmitOrigin:
+        return eventLabel + " coincides with the current TX origin.";
+    case rhv::core::EventSignalState::LinkValid:
+        return eventLabel + " lies on the selected observer's future null path.";
+    case rhv::core::EventSignalState::FutureInterior:
+        return eventLabel + " is in the future cone, but this exact null transmission misses it.";
+    case rhv::core::EventSignalState::Spacelike:
+        return eventLabel + " is outside the selected TX light cone.";
+    case rhv::core::EventSignalState::Past:
+        return eventLabel + " is already in the past of the selected TX event.";
+    }
+
+    return eventLabel + " is not reachable by the current null transmission.";
 }
 
 void DrawStatusBadge(const StatusBadge& badge)
@@ -114,9 +281,9 @@ void DrawCommandStripPanel(const OperationalState& operationalState)
 void DrawCausalSelectionSummary(
     const Palette& palette,
     const rhv::models::SpacetimeEvent& selectedEvent,
-    const rhv::render2d::CausalRelation relationToOrigin,
-    const rhv::render2d::RelationCounts& relationCounts,
-    const std::string& intervalLabel)
+    const InertialObserver& selectedObserver,
+    const rhv::core::ProperTimeSample& selectedObserverSample,
+    const rhv::core::SignalPropagationReport& signalReport)
 {
     if (ImGui::BeginTable(
             "causal_selection_summary",
@@ -134,38 +301,63 @@ void DrawCausalSelectionSummary(
             rhv::render2d::FormatCoordinateLabel(selectedEvent),
             palette.bodyText,
             88.0f);
+        rhv::ui::DrawStatusRow(
+            "EVENT LINK",
+            FormatEventLinkState(signalReport.eventLink),
+            ResolveToneColor(palette, ResolveEventSignalTone(signalReport.eventLink.state)),
+            88.0f);
 
         ImGui::TableNextColumn();
         rhv::ui::DrawStatusRow(
-            "REL TO O0",
-            rhv::render2d::DescribeRelation(relationToOrigin),
-            ResolveToneColor(palette, ResolveRelationTone(relationToOrigin)),
+            "OBSERVER",
+            selectedObserver.observerId,
+            ResolveToneColor(palette, selectedObserver.tone),
             96.0f);
-        rhv::ui::DrawStatusRow("INTERVAL", intervalLabel, palette.structuralText, 96.0f);
+        rhv::ui::DrawStatusRow(
+            "WORLDLINE",
+            FormatWorldlineEquation(selectedObserver),
+            palette.bodyText,
+            96.0f);
+        rhv::ui::DrawStatusRow(
+            "TX ORIGIN",
+            FormatTransmitOriginLabel(signalReport),
+            palette.warningText,
+            96.0f);
+        rhv::ui::DrawStatusRow(
+            "CLOCK",
+            FormatProperTimeSummary(selectedObserverSample),
+            palette.structuralText,
+            96.0f);
         ImGui::EndTable();
     }
 
-    const std::string timelikeChip = "TIMELIKE " + std::to_string(relationCounts.timelikeCount);
-    const std::string nullChip = "NULL " + std::to_string(relationCounts.nullCount);
-    const std::string spacelikeChip = "SPACELIKE " + std::to_string(relationCounts.spacelikeCount);
+    const std::string txChip = "NULL TX";
+    const std::string txTimeChip = "TX T=" + TruncateForPanel(FormatTransmitOriginLabel(signalReport), 16U);
+    const std::string eventChip = FormatEventLinkChip(signalReport.eventLink);
+    const std::string observerChip = "OBS RX " + std::to_string(signalReport.validObserverLinkCount);
 
-    rhv::ui::DrawLabelChip(timelikeChip.c_str(), palette.activeText, ThemeMode::TerminalBase);
+    rhv::ui::DrawLabelChip(txChip.c_str(), palette.warningText, ThemeMode::TerminalBase);
     ImGui::SameLine();
-    rhv::ui::DrawLabelChip(nullChip.c_str(), palette.warningText, ThemeMode::TerminalBase);
+    rhv::ui::DrawLabelChip(txTimeChip.c_str(), palette.structuralText, ThemeMode::TerminalBase);
     ImGui::SameLine();
-    rhv::ui::DrawLabelChip(spacelikeChip.c_str(), palette.structuralText, ThemeMode::TerminalBase);
+    rhv::ui::DrawLabelChip(
+        eventChip.c_str(),
+        ResolveToneColor(palette, ResolveEventSignalTone(signalReport.eventLink.state)),
+        ThemeMode::TerminalBase);
+    ImGui::SameLine();
+    rhv::ui::DrawLabelChip(observerChip.c_str(), palette.activeText, ThemeMode::TerminalBase);
 
     ImGui::PushStyleColor(ImGuiCol_Text, palette.structuralText);
-    ImGui::TextWrapped("%s", selectedEvent.description.c_str());
+    ImGui::TextUnformatted(TruncateForPanel(FormatSignalNote(selectedEvent.label, signalReport.eventLink), 96U).c_str());
     ImGui::PopStyleColor();
 }
 
-void DrawCausalViewPanel(const OperationalState& operationalState)
+void DrawCausalViewPanel(
+    const OperationalState& operationalState,
+    const rhv::models::MinkowskiDiagramScene& scene,
+    rhv::render2d::MinkowskiViewState& viewState)
 {
     const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
-    static const rhv::models::MinkowskiDiagramScene scene = rhv::core::BuildMinkowskiDemoScene();
-    static rhv::render2d::MinkowskiViewState viewState{};
-
     rhv::render2d::EnsureViewState(scene, viewState);
 
     rhv::ui::DrawStatusRow("VIEW MODE", operationalState.causalViewMode, palette.activeText, 116.0f);
@@ -179,6 +371,8 @@ void DrawCausalViewPanel(const OperationalState& operationalState)
 
     rhv::ui::DrawLabelChip("EVENTS", palette.activeText, ThemeMode::TerminalBase);
     ImGui::SameLine();
+    rhv::ui::DrawLabelChip("WORLDLINES", palette.structuralText, ThemeMode::TerminalBase);
+    ImGui::SameLine();
     rhv::ui::DrawLabelChip("LIGHT CONE", palette.warningText, ThemeMode::TerminalBase);
     ImGui::SameLine();
     rhv::ui::DrawLabelChip("TOY MODEL", palette.structuralText, ThemeMode::TerminalBase);
@@ -187,23 +381,21 @@ void DrawCausalViewPanel(const OperationalState& operationalState)
     const rhv::render2d::MinkowskiRenderResult renderResult =
         rhv::render2d::DrawMinkowskiDiagram(scene, viewState, "minkowski_canvas", canvasHeight);
     const rhv::models::SpacetimeEvent& selectedEvent = scene.events[renderResult.selectedEventIndex];
-    const rhv::models::SpacetimeEvent& originEvent = scene.events[scene.defaultSelectedEventIndex];
-    const rhv::render2d::CausalRelation relationToOrigin =
-        rhv::render2d::ClassifyRelation(originEvent, selectedEvent);
-    const rhv::render2d::RelationCounts relationCounts =
-        rhv::render2d::CountRelations(scene, renderResult.selectedEventIndex);
-    const double intervalSquared =
-        rhv::render2d::ComputeIntervalSquared(originEvent, selectedEvent);
-
-    std::ostringstream intervalStream;
-    intervalStream << std::fixed << std::setprecision(2) << "DS^2=" << intervalSquared;
+    const InertialObserver& selectedObserver = scene.observers[renderResult.selectedObserverIndex];
+    const rhv::core::ProperTimeSample selectedObserverSample =
+        rhv::core::ComputeProperTimeSample(selectedObserver, scene.properTimeWindow);
+    const rhv::core::SignalPropagationReport signalReport =
+        rhv::core::ComputeSignalPropagation(
+            scene,
+            renderResult.selectedObserverIndex,
+            renderResult.selectedEventIndex);
 
     DrawCausalSelectionSummary(
         palette,
         selectedEvent,
-        relationToOrigin,
-        relationCounts,
-        intervalStream.str());
+        selectedObserver,
+        selectedObserverSample,
+        signalReport);
 }
 
 void DrawSpatialViewPanel(const FrameVisualState& frameState, const OperationalState& operationalState)
@@ -230,19 +422,65 @@ void DrawSpatialViewPanel(const FrameVisualState& frameState, const OperationalS
     rhv::ui::DrawLabelChip("3D PATH RESERVED", terminalPalette.warningText, ThemeMode::TerminalBase);
 }
 
-void DrawObserverSlot(const ObserverPlaceholder& observer)
+bool DrawObserverSlot(const ObserverTelemetry& observer)
 {
     const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
     const ImVec4& observerColor = ResolveToneColor(palette, observer.tone);
+    const ImVec4 childBackground = observer.isSelected
+        ? ImVec4(palette.panelRaised.x, palette.panelRaised.y, palette.panelRaised.z, 0.82f)
+        : ImVec4(palette.panelBackground.x, palette.panelBackground.y, palette.panelBackground.z, 0.92f);
+    const ImVec2 cardPadding(10.0f, 8.0f);
+    const float chipHeight = ImGui::CalcTextSize(observer.observerId.c_str()).y + 6.0f;
+    const float statusRowHeight = ImGui::GetTextLineHeightWithSpacing();
+    const float cardHeight = (cardPadding.y * 2.0f) + chipHeight + (statusRowHeight * 5.0f) + 4.0f;
 
-    rhv::ui::DrawLabelChip(observer.observerId.c_str(), observerColor, ThemeMode::TerminalBase);
-    ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Text, palette.bodyText);
-    ImGui::TextUnformatted(observer.assignmentState.c_str());
-    ImGui::PopStyleColor();
+    ImGui::PushID(observer.observerId.c_str());
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, childBackground);
+    ImGui::PushStyleColor(ImGuiCol_Border, observerColor);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, cardPadding);
+    const bool isVisible = ImGui::BeginChild(
+        "observer_card",
+        ImVec2(0.0f, cardHeight),
+        true,
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-    rhv::ui::DrawStatusRow("LOCAL FRAME", observer.localFrameState, palette.structuralText, 108.0f);
-    rhv::ui::DrawStatusRow("CLOCK BUS", observer.clockState, palette.warningText, 108.0f);
+    bool wasClicked = false;
+    if (isVisible)
+    {
+        wasClicked = ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+
+        if (observer.isSelected)
+        {
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            const ImVec2 windowPos = ImGui::GetWindowPos();
+            const ImVec2 windowSize = ImGui::GetWindowSize();
+            drawList->AddRect(
+                ImVec2(windowPos.x + 3.0f, windowPos.y + 3.0f),
+                ImVec2(windowPos.x + windowSize.x - 3.0f, windowPos.y + windowSize.y - 3.0f),
+                rhv::ui::ToU32(observerColor, 0.95f),
+                0.0f,
+                0,
+                1.0f);
+        }
+
+        rhv::ui::DrawLabelChip(observer.observerId.c_str(), observerColor, ThemeMode::TerminalBase);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Text, observer.isSelected ? palette.activeText : palette.bodyText);
+        ImGui::TextUnformatted(observer.trackState.c_str());
+        ImGui::PopStyleColor();
+
+        rhv::ui::DrawStatusRow("WORLDLINE", observer.worldlineState, observerColor, 92.0f);
+        rhv::ui::DrawStatusRow("VELOCITY", observer.velocityState, palette.warningText, 92.0f);
+        rhv::ui::DrawStatusRow("WINDOW", observer.windowState, palette.structuralText, 92.0f);
+        rhv::ui::DrawStatusRow("DTAU", observer.properTimeState, palette.activeText, 92.0f);
+        rhv::ui::DrawStatusRow("LINK", observer.linkState, palette.bodyText, 92.0f);
+    }
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
+    ImGui::PopID();
+    return wasClicked;
 }
 
 void DrawSymbolGlyph(const SymbolConvention& convention)
@@ -309,33 +547,27 @@ void DrawSymbolConventionRow(const SymbolConvention& convention)
     ImGui::PopStyleColor();
 }
 
-void DrawObserverStackPanel(const OperationalState& operationalState)
+bool DrawObserverStackPanel(
+    const OperationalState& operationalState,
+    std::size_t& selectedObserverIndex)
 {
+    bool selectionChanged = false;
+
     for (std::size_t index = 0; index < operationalState.observers.size(); ++index)
     {
-        DrawObserverSlot(operationalState.observers[index]);
+        if (DrawObserverSlot(operationalState.observers[index]))
+        {
+            selectedObserverIndex = index;
+            selectionChanged = true;
+        }
+
         if (index + 1U < operationalState.observers.size())
         {
-            ImGui::Separator();
+            ImGui::Dummy(ImVec2(0.0f, 4.0f));
         }
     }
 
-    ImGui::Separator();
-    rhv::ui::DrawWrappedNote(
-        "STACK",
-        "Observer editing begins later. In 0D this stack establishes operational labels, clock vocabulary, and selection language only.",
-        ThemeMode::TerminalBase);
-
-    ImGui::Separator();
-    rhv::ui::DrawWrappedNote(
-        "SYMBOL BUS",
-        "These symbols define the terminal's internal visual language. They are conventions, not simulation output.",
-        ThemeMode::TerminalBase);
-
-    for (const SymbolConvention& convention : operationalState.symbolConventions)
-    {
-        DrawSymbolConventionRow(convention);
-    }
+    return selectionChanged;
 }
 
 void DrawSystemStatePanel(const BootTelemetry& telemetry, const OperationalState& operationalState)
@@ -391,7 +623,55 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
     }
 
     const HybridScreenLayout layout = BuildHybridScreenLayout(viewport->Pos, viewport->Size);
-    const OperationalState operationalState = rhv::core::BuildOperationalState(telemetry, frameState);
+    static const rhv::models::MinkowskiDiagramScene scene = rhv::core::BuildMinkowskiDemoScene();
+    static rhv::render2d::MinkowskiViewState viewState{};
+    rhv::render2d::EnsureViewState(scene, viewState);
+
+    OperationalState operationalState = rhv::core::BuildOperationalState(
+        telemetry,
+        frameState,
+        scene,
+        viewState.selectedObserverIndex,
+        viewState.selectedEventIndex);
+
+    if (BeginManagedPanel(
+            "causal_view_panel",
+            "CAUSAL VIEW",
+            "2D REGION",
+            ThemeMode::TerminalBase,
+            layout.causalView,
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
+    {
+        DrawCausalViewPanel(operationalState, scene, viewState);
+    }
+    EndManagedPanel();
+
+    operationalState = rhv::core::BuildOperationalState(
+        telemetry,
+        frameState,
+        scene,
+        viewState.selectedObserverIndex,
+        viewState.selectedEventIndex);
+
+    if (BeginManagedPanel(
+            "observer_stack_panel",
+            "OBSERVER STACK",
+            "SIDE BUS",
+            ThemeMode::TerminalBase,
+            layout.observerStack))
+    {
+        const bool selectionChanged = DrawObserverStackPanel(operationalState, viewState.selectedObserverIndex);
+        if (selectionChanged)
+        {
+            operationalState = rhv::core::BuildOperationalState(
+                telemetry,
+                frameState,
+                scene,
+                viewState.selectedObserverIndex,
+                viewState.selectedEventIndex);
+        }
+    }
+    EndManagedPanel();
 
     if (BeginManagedPanel(
             "cmd_panel",
@@ -406,18 +686,6 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
     EndManagedPanel();
 
     if (BeginManagedPanel(
-            "causal_view_panel",
-            "CAUSAL VIEW",
-            "2D REGION",
-            ThemeMode::TerminalBase,
-            layout.causalView,
-            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse))
-    {
-        DrawCausalViewPanel(operationalState);
-    }
-    EndManagedPanel();
-
-    if (BeginManagedPanel(
             "spatial_view_panel",
             "SPATIAL VIEW",
             "3D REGION",
@@ -425,17 +693,6 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
             layout.spatialView))
     {
         DrawSpatialViewPanel(frameState, operationalState);
-    }
-    EndManagedPanel();
-
-    if (BeginManagedPanel(
-            "observer_stack_panel",
-            "OBSERVER STACK",
-            "SIDE BUS",
-            ThemeMode::TerminalBase,
-            layout.observerStack))
-    {
-        DrawObserverStackPanel(operationalState);
     }
     EndManagedPanel();
 

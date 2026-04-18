@@ -10,6 +10,11 @@ models::MinkowskiDiagramScene BuildMinkowskiDemoScene()
     scene.simplificationNote =
         "Toy model: 1+1 dimensional flat spacetime only. No acceleration, curvature, or 3D optical effects are included.";
     scene.defaultSelectedEventIndex = 0;
+    scene.defaultSelectedObserverIndex = 0;
+    scene.properTimeWindow = {
+        "CLOCK WINDOW / T=0.0 TO T=4.0",
+        0.0,
+        4.0};
     scene.events = {
         models::SpacetimeEvent{
             "O0",
@@ -47,6 +52,26 @@ models::MinkowskiDiagramScene BuildMinkowskiDemoScene()
             -1.4,
             models::Tone::Warning,
             "Null-separated in the past. This lies on a past light-speed path for O0."},
+    };
+    scene.observers = {
+        models::InertialObserver{
+            "OBSERVER A",
+            0.0,
+            0.0,
+            models::Tone::Active,
+            "Reference inertial observer. Its worldline is vertical because position stays fixed while coordinate time advances."},
+        models::InertialObserver{
+            "OBSERVER B",
+            -2.6,
+            0.35,
+            models::Tone::Structural,
+            "Inertial observer moving toward positive X at constant speed. In this toy model the worldline is a straight tilted trace."},
+        models::InertialObserver{
+            "OBSERVER C",
+            2.8,
+            -0.50,
+            models::Tone::Warning,
+            "Inertial observer moving toward negative X. The steeper tilt still remains slower than light because |v| < 1."},
     };
 
     return scene;
