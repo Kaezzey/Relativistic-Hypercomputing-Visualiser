@@ -322,65 +322,64 @@ std::vector<Segment3D> BuildSceneSegments(
     const ImVec4 xAxis(terminalPalette.warningText.x, terminalPalette.warningText.y, terminalPalette.warningText.z, 1.00f);
     const ImVec4 yAxis(terminalPalette.activeText.x, terminalPalette.activeText.y, terminalPalette.activeText.z, 1.00f);
     const ImVec4 zAxis(terminalPalette.headerText.x, terminalPalette.headerText.y, terminalPalette.headerText.z, 0.96f);
-    const ImVec4 shellOuter(schematicPalette.accentSecondary.x, schematicPalette.accentSecondary.y, schematicPalette.accentSecondary.z, 0.64f);
-    const ImVec4 shellCaution(terminalPalette.warningText.x, terminalPalette.warningText.y, terminalPalette.warningText.z, 0.92f);
-    const ImVec4 shellHorizon(terminalPalette.activeText.x, terminalPalette.activeText.y, terminalPalette.activeText.z, 1.00f);
+    const ImVec4 shellOuter(schematicPalette.accentSecondary.x, schematicPalette.accentSecondary.y, schematicPalette.accentSecondary.z, 0.28f);
+    const ImVec4 shellCaution(terminalPalette.warningText.x, terminalPalette.warningText.y, terminalPalette.warningText.z, 0.46f);
+    const ImVec4 shellHorizon(terminalPalette.activeText.x, terminalPalette.activeText.y, terminalPalette.activeText.z, 0.62f);
     const ImVec4 shellCore(terminalPalette.warningText.x, terminalPalette.warningText.y * 0.82f, 0.18f, pulse);
-    const ImVec4 referenceCube(terminalPalette.activeText.x, terminalPalette.activeText.y, terminalPalette.activeText.z, 0.90f);
 
     std::vector<Segment3D> segments;
-    segments.reserve(420U);
+    segments.reserve(360U);
 
     constexpr int gridHalfExtent = 7;
     for (int index = -gridHalfExtent; index <= gridHalfExtent; ++index)
     {
         const ImVec4 color = (index == 0 || (index % 2) == 0) ? gridMajor : gridMinor;
-        const float intensity = (index == 0 || (index % 2) == 0) ? 1.05f : 0.76f;
+        const float intensity = (index == 0 || (index % 2) == 0) ? 0.94f : 0.60f;
         PushSegment(segments, Vec3{-7.0f, 0.0f, static_cast<float>(index)}, Vec3{7.0f, 0.0f, static_cast<float>(index)}, color, intensity);
         PushSegment(segments, Vec3{static_cast<float>(index), 0.0f, -7.0f}, Vec3{static_cast<float>(index), 0.0f, 7.0f}, color, intensity);
     }
 
-    PushSegment(segments, Vec3{-7.0f, 0.0f, 0.0f}, Vec3{7.0f, 0.0f, 0.0f}, xAxis, 1.35f);
-    PushSegment(segments, Vec3{0.0f, 0.0f, -7.0f}, Vec3{0.0f, 0.0f, 7.0f}, zAxis, 1.18f);
-    PushSegment(segments, Vec3{0.0f, 0.0f, 0.0f}, Vec3{0.0f, 3.5f, 0.0f}, yAxis, 1.28f);
-    PushWireCube(segments, Vec3{-2.0f, 0.62f, 1.65f}, 0.42f, referenceCube, 1.18f);
-    PushWireCube(segments, Vec3{1.25f, 0.82f, -1.60f}, 0.62f, referenceCube, 1.28f);
+    PushSegment(segments, Vec3{-7.0f, 0.0f, 0.0f}, Vec3{7.0f, 0.0f, 0.0f}, xAxis, 1.10f);
+    PushSegment(segments, Vec3{0.0f, 0.0f, -7.0f}, Vec3{0.0f, 0.0f, 7.0f}, zAxis, 0.96f);
+    PushSegment(segments, Vec3{0.0f, 0.0f, 0.0f}, Vec3{0.0f, 3.5f, 0.0f}, yAxis, 1.02f);
 
     const Vec3 bhCenter{regionModel.centerX, regionModel.centerY, regionModel.centerZ};
-    PushSphereRings(segments, bhCenter, regionModel.analysisRadius, shellOuter, 1.15f);
-    PushSphereRings(segments, bhCenter, regionModel.cautionRadius, shellCaution, 1.35f);
-    PushSphereRings(segments, bhCenter, regionModel.horizonRadius, shellHorizon, 1.55f);
-    PushSphereRings(segments, bhCenter, regionModel.coreRadius, shellCore, 1.75f);
+    PushSphereRings(segments, bhCenter, regionModel.analysisRadius, shellOuter, 0.74f);
+    PushSphereRings(segments, bhCenter, regionModel.cautionRadius, shellCaution, 0.92f);
+    PushSphereRings(segments, bhCenter, regionModel.horizonRadius, shellHorizon, 1.05f);
+    PushSphereRings(segments, bhCenter, regionModel.coreRadius, shellCore, 1.20f);
 
     PushSegment(
         segments,
         Vec3{regionModel.centerX - regionModel.analysisRadius - 1.1f, regionModel.centerY, regionModel.centerZ},
         Vec3{regionModel.centerX + regionModel.analysisRadius + 0.2f, regionModel.centerY, regionModel.centerZ},
         shellOuter,
-        1.10f);
+        0.86f);
     PushSegment(
         segments,
         Vec3{regionModel.centerX, 0.0f, regionModel.centerZ},
         Vec3{regionModel.centerX, regionModel.centerY + regionModel.analysisRadius + 0.2f, regionModel.centerZ},
         shellHorizon,
-        1.30f);
+        0.96f);
 
     return segments;
 }
 
-void InitializeViewState(SpatialViewState& viewState)
+void InitializeViewState(
+    SpatialViewState& viewState,
+    const ToyBlackHoleRegionModel& regionModel)
 {
     if (viewState.isInitialized)
     {
         return;
     }
 
-    viewState.yawRadians = 0.72f;
-    viewState.pitchRadians = 0.44f;
-    viewState.distance = 11.2f;
-    viewState.targetX = 2.8f;
-    viewState.targetY = 1.05f;
-    viewState.targetZ = 0.0f;
+    viewState.yawRadians = 0.34f;
+    viewState.pitchRadians = 0.16f;
+    viewState.distance = 9.2f;
+    viewState.targetX = regionModel.centerX;
+    viewState.targetY = regionModel.centerY + 0.18f;
+    viewState.targetZ = regionModel.centerZ;
     viewState.lockedObserverIndex = -1;
     viewState.hoveredObserverIndex = -1;
     viewState.isInitialized = true;
@@ -514,6 +513,187 @@ void DrawBackground(
         1.0f);
 }
 
+ImVec4 MixColor(const ImVec4& left, const ImVec4& right, const float amount)
+{
+    const float t = std::clamp(amount, 0.0f, 1.0f);
+    return ImVec4(
+        left.x + ((right.x - left.x) * t),
+        left.y + ((right.y - left.y) * t),
+        left.z + ((right.z - left.z) * t),
+        left.w + ((right.w - left.w) * t));
+}
+
+Vec3 BuildAccretionBandPoint(
+    const ToyBlackHoleRegionModel& regionModel,
+    const float radius,
+    const float angle)
+{
+    const Vec3 center{regionModel.centerX, regionModel.centerY, regionModel.centerZ};
+    const Vec3 majorAxis = Normalize(Vec3{1.0f, 0.0f, 0.16f});
+    const Vec3 minorAxis = Normalize(Vec3{0.18f, 0.44f, 1.0f});
+    const float asymmetry = 1.0f + (0.16f * std::cos(angle - 0.55f)) + (0.06f * std::sin((2.0f * angle) + 0.40f));
+    const float curl = 1.0f + (0.20f * std::cos(angle + 1.25f));
+    const float warp = 0.12f * std::sin(angle - 0.60f) * (radius / regionModel.accretionOuterRadius);
+
+    return center +
+        (majorAxis * (std::cos(angle) * radius * asymmetry)) +
+        (minorAxis * (std::sin(angle) * radius * curl)) +
+        Vec3{0.0f, warp, 0.0f};
+}
+
+bool BuildProjectedBandLoop(
+    const ToyBlackHoleRegionModel& regionModel,
+    const float radius,
+    const Mat4& viewProjection,
+    const ImVec2& canvasMin,
+    const ImVec2& canvasMax,
+    std::vector<ImVec2>& projectedPoints)
+{
+    constexpr int sampleCount = 88;
+    projectedPoints.clear();
+    projectedPoints.reserve(sampleCount);
+
+    for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
+    {
+        const float angle = (static_cast<float>(sampleIndex) / static_cast<float>(sampleCount)) * (2.0f * kPi);
+        ImVec2 screenPoint{};
+        if (!ProjectToScreen(
+                BuildAccretionBandPoint(regionModel, radius, angle),
+                viewProjection,
+                canvasMin,
+                canvasMax,
+                screenPoint))
+        {
+            projectedPoints.clear();
+            return false;
+        }
+
+        projectedPoints.push_back(screenPoint);
+    }
+
+    return projectedPoints.size() >= 3U;
+}
+
+void DrawFilledLoop(
+    ImDrawList* drawList,
+    const std::vector<ImVec2>& points,
+    const ImVec4& color,
+    const float alpha)
+{
+    if (points.size() < 3U)
+    {
+        return;
+    }
+
+    drawList->AddConvexPolyFilled(
+        points.data(),
+        static_cast<int>(points.size()),
+        rhv::ui::ToU32(color, alpha));
+}
+
+void DrawLoopEdges(
+    ImDrawList* drawList,
+    const std::vector<ImVec2>& points,
+    const ImVec2& centerScreen,
+    const ImVec4& upperColor,
+    const ImVec4& lowerColor,
+    const float upperIntensity,
+    const float lowerIntensity)
+{
+    if (points.size() < 2U)
+    {
+        return;
+    }
+
+    for (std::size_t index = 0; index < points.size(); ++index)
+    {
+        const ImVec2& start = points[index];
+        const ImVec2& end = points[(index + 1U) % points.size()];
+        const bool upperArc = ((start.y + end.y) * 0.5f) < centerScreen.y;
+        DrawEmissiveLine(
+            drawList,
+            start,
+            end,
+            upperArc ? upperColor : lowerColor,
+            upperArc ? upperIntensity : lowerIntensity);
+    }
+}
+
+void DrawAccretionStructure(
+    ImDrawList* drawList,
+    const FrameVisualState& frameState,
+    const ToyBlackHoleRegionModel& regionModel,
+    const Mat4& viewProjection,
+    const ImVec2& canvasMin,
+    const ImVec2& canvasMax)
+{
+    const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const Palette& schematicPalette = rhv::ui::GetPalette(ThemeMode::SchematicTelemetry);
+    const ImVec4 hotCore = MixColor(terminalPalette.headerText, ImVec4(1.0f, 0.96f, 0.78f, 1.0f), 0.68f);
+    const ImVec4 warmBand = MixColor(terminalPalette.warningText, ImVec4(1.0f, 0.78f, 0.20f, 1.0f), 0.44f);
+    const ImVec4 outerGlow = MixColor(schematicPalette.accentPrimary, terminalPalette.warningText, 0.70f);
+    const ImVec4 shadowWarm(0.24f, 0.11f, 0.02f, 1.0f);
+
+    std::vector<ImVec2> glowOuter;
+    std::vector<ImVec2> glowMid;
+    std::vector<ImVec2> bandOuter;
+    std::vector<ImVec2> shadowGlow;
+    std::vector<ImVec2> shadowLoop;
+
+    if (!BuildProjectedBandLoop(regionModel, regionModel.accretionOuterRadius * 1.22f, viewProjection, canvasMin, canvasMax, glowOuter) ||
+        !BuildProjectedBandLoop(regionModel, regionModel.accretionOuterRadius * 1.08f, viewProjection, canvasMin, canvasMax, glowMid) ||
+        !BuildProjectedBandLoop(regionModel, regionModel.accretionOuterRadius, viewProjection, canvasMin, canvasMax, bandOuter) ||
+        !BuildProjectedBandLoop(regionModel, regionModel.shadowRadius * 1.12f, viewProjection, canvasMin, canvasMax, shadowGlow) ||
+        !BuildProjectedBandLoop(regionModel, regionModel.shadowRadius, viewProjection, canvasMin, canvasMax, shadowLoop))
+    {
+        return;
+    }
+
+    ImVec2 centerScreen{};
+    if (!ProjectToScreen(
+            Vec3{regionModel.centerX, regionModel.centerY, regionModel.centerZ},
+            viewProjection,
+            canvasMin,
+            canvasMax,
+            centerScreen))
+    {
+        return;
+    }
+
+    DrawFilledLoop(drawList, glowOuter, outerGlow, 0.11f);
+    DrawFilledLoop(drawList, glowMid, warmBand, 0.18f);
+    DrawFilledLoop(drawList, bandOuter, hotCore, 0.26f);
+    DrawFilledLoop(drawList, shadowGlow, shadowWarm, 0.24f);
+    DrawFilledLoop(drawList, shadowLoop, ImVec4(0.0f, 0.0f, 0.0f, 1.0f), 0.98f);
+
+    DrawLoopEdges(drawList, bandOuter, centerScreen, hotCore, warmBand, 1.65f, 1.18f);
+    DrawLoopEdges(drawList, shadowLoop, centerScreen, hotCore, warmBand, 1.16f, 0.86f);
+
+    for (int particleIndex = 0; particleIndex < 38; ++particleIndex)
+    {
+        const float phase = (static_cast<float>(particleIndex) / 38.0f) * (2.0f * kPi);
+        const float radiusBlend = 0.36f + (0.34f * (0.5f + (0.5f * std::sin((phase * 2.7f) + static_cast<float>(frameState.uptimeSeconds) * 0.35f))));
+        const float radius =
+            regionModel.shadowRadius +
+            ((regionModel.accretionOuterRadius - regionModel.shadowRadius) * radiusBlend);
+
+        ImVec2 particleScreen{};
+        if (!ProjectToScreen(
+                BuildAccretionBandPoint(regionModel, radius, phase + 0.22f),
+                viewProjection,
+                canvasMin,
+                canvasMax,
+                particleScreen))
+        {
+            continue;
+        }
+
+        const float size = 1.1f + (0.9f * (0.5f + (0.5f * std::cos(phase * 3.0f))));
+        const ImVec4 particleColor = MixColor(hotCore, warmBand, 0.35f + (0.45f * radiusBlend));
+        DrawEmissiveDot(drawList, particleScreen, size, particleColor, 0.58f);
+    }
+}
+
 void DrawRegionCallout(
     ImDrawList* drawList,
     const ImVec2& anchor,
@@ -562,11 +742,11 @@ void DrawViewportOverlay(
     drawList->AddText(
         ImVec2(canvasMin.x + 10.0f, canvasMin.y + 8.0f),
         rhv::ui::ToU32(terminalPalette.headerText, flicker),
-        "TOY BH REGION / OBSERVER SNAP");
+        "TOY BH REGION / SHADOW BAND");
     drawList->AddText(
         ImVec2(canvasMin.x + 10.0f, canvasMin.y + 24.0f),
         rhv::ui::ToU32(schematicPalette.accentPrimary, 0.92f),
-        "HORIZON SHELL IS A TEACHING CONSTRUCT");
+        "STYLISED BAND ONLY / OPTICAL MODE OFFLINE");
     drawList->AddText(
         ImVec2(canvasMax.x - 230.0f, canvasMax.y - 18.0f),
         rhv::ui::ToU32(terminalPalette.structuralText, 0.84f),
@@ -792,7 +972,7 @@ SpatialViewportRenderResult DrawSpatialViewport(
     const ImVec2& canvasSize,
     const char* widgetId)
 {
-    InitializeViewState(viewState);
+    InitializeViewState(viewState, regionModel);
 
     SpatialViewportRenderResult result{};
     result.snapshotCoordinateTime = static_cast<float>(scene.properTimeWindow.coordinateTimeStart);
@@ -824,6 +1004,7 @@ SpatialViewportRenderResult DrawSpatialViewport(
 
         const std::vector<Segment3D> segments = BuildSceneSegments(frameState, regionModel);
         DrawSceneSegments(drawList, segments, viewProjection, canvasMin, canvasMax);
+        DrawAccretionStructure(drawList, frameState, regionModel, viewProjection, canvasMin, canvasMax);
 
         std::vector<ObserverMarker> markers = BuildObserverMarkers(scene, result.snapshotCoordinateTime);
         UpdateMarkerProjectionAndPicking(markers, viewState, result, viewProjection, canvasMin, canvasMax);

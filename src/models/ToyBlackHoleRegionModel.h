@@ -23,5 +23,7 @@ struct ToyBlackHoleRegionModel
     float horizonRadius = 1.22f;
     float cautionRadius = 2.35f;
     float analysisRadius = 3.20f;
+    float shadowRadius = 1.08f;
+    float accretionOuterRadius = 3.85f;
 };
 }  // namespace rhv::models

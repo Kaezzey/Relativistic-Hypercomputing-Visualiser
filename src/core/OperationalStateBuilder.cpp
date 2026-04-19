@@ -247,8 +247,8 @@ models::OperationalState BuildOperationalState(
         ? "HORIZON GUIDE ACTIVE / CAUSAL ACCESS SHIFTING"
         : "NULL TX ONLINE / LINK QUERY ACTIVE";
     state.spatialViewMode = "TOY BH REGION / OBSERVER SNAPSHOT";
-    state.spatialStatus = "HORIZON SHELL ONLINE / REGION MAP ACTIVE";
-    state.lensState = "OPTICAL MODE OFFLINE / LENS STAGE PENDING";
+    state.spatialStatus = "HORIZON SHELL + SHADOW BAND / REGION MAP ACTIVE";
+    state.lensState = "OPTICAL MODE OFFLINE / SHADOW BAND IS STYLISED";
 
     state.commandBadges = {
         StatusBadge{bootPhase.phase, bootPhase.tone, false},
@@ -316,7 +316,7 @@ models::OperationalState BuildOperationalState(
             signalReport.validObserverLinkCount > 0 ? Tone::Active : Tone::Warning},
         EventLogEntry{
             "CTL-06",
-            "CAUSAL LMB SELECT. SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE. QUERY REGION SHELLS. DISPLAY SIZE " +
+            "CAUSAL LMB SELECT. SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE. QUERY REGION SHELLS AND STYLISED SHADOW BAND. DISPLAY SIZE " +
                 std::to_string(telemetry.framebufferWidth) + " X " +
                 std::to_string(telemetry.framebufferHeight) + ".",
             Tone::Muted},
@@ -340,8 +340,8 @@ models::OperationalState BuildOperationalState(
     if (!isBootTransient)
     {
         state.eventLog[0].message = selectedObserverUsesAcceleration
-            ? "BOOT PHASE STABLE. ACCELERATION DEMO SCENE AND 3D TOY BH REGION OVERVIEW ONLINE."
-            : "BOOT PHASE STABLE. WORLDLINE SIGNAL DEMO SCENE AND 3D TOY BH REGION OVERVIEW ONLINE.";
+            ? "BOOT PHASE STABLE. ACCELERATION DEMO SCENE AND 3D TOY BH REGION SILHOUETTE ONLINE."
+            : "BOOT PHASE STABLE. WORLDLINE SIGNAL DEMO SCENE AND 3D TOY BH REGION SILHOUETTE ONLINE.";
     }
 
     state.eventLog[5].message += " " + BuildFrameClockLabel(frameState) + ".";
