@@ -24,6 +24,9 @@ struct SpatialViewportRenderResult
     float viewportAspectRatio = 1.0f;
     float snapshotCoordinateTime = 0.0f;
     float displayObserverRadius = 0.0f;
+    float opticalWarpStrength = 0.0f;
+    float shadowScreenRadius = 0.0f;
+    models::SpatialViewMode viewMode = models::SpatialViewMode::RegionOverview;
     models::SpatialRegionRelation displayObserverRelation =
         models::SpatialRegionRelation::OuterReference;
 };

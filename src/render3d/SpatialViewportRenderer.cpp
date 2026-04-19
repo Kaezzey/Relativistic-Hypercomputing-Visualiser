@@ -17,6 +17,7 @@ namespace
 using rhv::models::FrameVisualState;
 using rhv::models::MinkowskiDiagramScene;
 using rhv::models::ObserverWorldline;
+using rhv::models::SpatialViewMode;
 using rhv::models::SpatialViewState;
 using rhv::models::Tone;
 using rhv::models::ToyBlackHoleRegionModel;
@@ -629,6 +630,7 @@ void DrawAccretionStructure(
 {
     const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
     const Palette& schematicPalette = rhv::ui::GetPalette(ThemeMode::SchematicTelemetry);
+    const float pulse = 0.94f + (0.06f * std::sin(static_cast<float>(frameState.uptimeSeconds) * 0.55f));
     const ImVec4 hotCore = MixColor(terminalPalette.headerText, ImVec4(1.0f, 0.96f, 0.78f, 1.0f), 0.68f);
     const ImVec4 warmBand = MixColor(terminalPalette.warningText, ImVec4(1.0f, 0.78f, 0.20f, 1.0f), 0.44f);
     const ImVec4 outerGlow = MixColor(schematicPalette.accentPrimary, terminalPalette.warningText, 0.70f);
@@ -660,38 +662,251 @@ void DrawAccretionStructure(
         return;
     }
 
-    DrawFilledLoop(drawList, glowOuter, outerGlow, 0.11f);
-    DrawFilledLoop(drawList, glowMid, warmBand, 0.18f);
-    DrawFilledLoop(drawList, bandOuter, hotCore, 0.26f);
+    DrawFilledLoop(drawList, glowOuter, outerGlow, 0.08f * pulse);
+    DrawFilledLoop(drawList, glowMid, warmBand, 0.13f * pulse);
+    DrawFilledLoop(drawList, bandOuter, hotCore, 0.22f * pulse);
     DrawFilledLoop(drawList, shadowGlow, shadowWarm, 0.24f);
     DrawFilledLoop(drawList, shadowLoop, ImVec4(0.0f, 0.0f, 0.0f, 1.0f), 0.98f);
 
-    DrawLoopEdges(drawList, bandOuter, centerScreen, hotCore, warmBand, 1.65f, 1.18f);
-    DrawLoopEdges(drawList, shadowLoop, centerScreen, hotCore, warmBand, 1.16f, 0.86f);
+    DrawLoopEdges(drawList, bandOuter, centerScreen, hotCore, warmBand, 1.34f * pulse, 0.98f * pulse);
+    DrawLoopEdges(drawList, shadowLoop, centerScreen, hotCore, warmBand, 0.90f * pulse, 0.72f * pulse);
+}
 
-    for (int particleIndex = 0; particleIndex < 38; ++particleIndex)
+float DistanceBetween(const ImVec2& left, const ImVec2& right)
+{
+    const float dx = left.x - right.x;
+    const float dy = left.y - right.y;
+    return std::sqrt((dx * dx) + (dy * dy));
+}
+
+float HashUnit(unsigned int value)
+{
+    value ^= value >> 16;
+    value *= 0x7feb352dU;
+    value ^= value >> 15;
+    value *= 0x846ca68bU;
+    value ^= value >> 16;
+    return static_cast<float>(value & 0x00ffffffU) / static_cast<float>(0x00ffffffU);
+}
+
+std::vector<ImVec2> BuildOpticalEllipseLoop(
+    const ImVec2& center,
+    const float radiusX,
+    const float radiusY,
+    const float verticalOffset,
+    const float skew,
+    const float upperScale,
+    const float lowerScale)
+{
+    constexpr int sampleCount = 96;
+    std::vector<ImVec2> points;
+    points.reserve(sampleCount);
+
+    for (int sampleIndex = 0; sampleIndex < sampleCount; ++sampleIndex)
     {
-        const float phase = (static_cast<float>(particleIndex) / 38.0f) * (2.0f * kPi);
-        const float radiusBlend = 0.36f + (0.34f * (0.5f + (0.5f * std::sin((phase * 2.7f) + static_cast<float>(frameState.uptimeSeconds) * 0.35f))));
-        const float radius =
-            regionModel.shadowRadius +
-            ((regionModel.accretionOuterRadius - regionModel.shadowRadius) * radiusBlend);
+        const float angle = (static_cast<float>(sampleIndex) / static_cast<float>(sampleCount)) * (2.0f * kPi);
+        const float cosine = std::cos(angle);
+        const float sine = std::sin(angle);
+        const float bulge = 1.0f + (0.08f * std::cos((2.0f * angle) - 0.35f));
+        const float verticalScale = sine >= 0.0f ? upperScale : lowerScale;
+        const float sideShift = skew * sine * radiusX;
 
-        ImVec2 particleScreen{};
-        if (!ProjectToScreen(
-                BuildAccretionBandPoint(regionModel, radius, phase + 0.22f),
-                viewProjection,
-                canvasMin,
-                canvasMax,
-                particleScreen))
+        points.push_back(ImVec2(
+            center.x + (cosine * radiusX * bulge) + sideShift,
+            center.y + verticalOffset + (sine * radiusY * verticalScale)));
+    }
+
+    return points;
+}
+
+ImVec2 ApplyOpticalWarp(
+    const ImVec2& point,
+    const ImVec2& center,
+    const float shadowRadius,
+    const float influenceRadius,
+    const float warpStrength)
+{
+    const float dx = point.x - center.x;
+    const float dy = point.y - center.y;
+    const float radius = std::sqrt((dx * dx) + (dy * dy));
+    if (radius <= 0.001f || radius >= influenceRadius)
+    {
+        return point;
+    }
+
+    const float normalized = 1.0f - (radius / influenceRadius);
+    const float deflection = warpStrength * shadowRadius * shadowRadius / (radius + (shadowRadius * 0.22f));
+    const float swirl = warpStrength * 0.22f * normalized * normalized;
+    const float angle = std::atan2(dy, dx) + swirl;
+    const float warpedRadius = radius + (deflection * normalized);
+
+    return ImVec2(
+        center.x + (std::cos(angle) * warpedRadius),
+        center.y + (std::sin(angle) * warpedRadius));
+}
+
+void DrawPathPolyline(
+    ImDrawList* drawList,
+    const std::vector<ImVec2>& points,
+    const ImVec4& color,
+    const float thickness,
+    const float alpha)
+{
+    if (points.size() < 2U)
+    {
+        return;
+    }
+
+    drawList->PathClear();
+    for (const ImVec2& point : points)
+    {
+        drawList->PathLineTo(point);
+    }
+
+    drawList->PathStroke(rhv::ui::ToU32(color, alpha), false, thickness);
+}
+
+float ComputeProjectedRadius(
+    const Vec3& center,
+    const Vec3& offset,
+    const Mat4& viewProjection,
+    const ImVec2& canvasMin,
+    const ImVec2& canvasMax)
+{
+    ImVec2 centerScreen{};
+    ImVec2 offsetScreen{};
+    if (!ProjectToScreen(center, viewProjection, canvasMin, canvasMax, centerScreen) ||
+        !ProjectToScreen(center + offset, viewProjection, canvasMin, canvasMax, offsetScreen))
+    {
+        return 0.0f;
+    }
+
+    return DistanceBetween(centerScreen, offsetScreen);
+}
+
+void DrawOpticalBackground(
+    ImDrawList* drawList,
+    const FrameVisualState& frameState,
+    const ImVec2& canvasMin,
+    const ImVec2& canvasMax,
+    const ImVec2& centerScreen,
+    const float shadowRadius,
+    const float warpStrength)
+{
+    const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const Palette& schematicPalette = rhv::ui::GetPalette(ThemeMode::SchematicTelemetry);
+    const float width = canvasMax.x - canvasMin.x;
+    const float height = canvasMax.y - canvasMin.y;
+    const float influenceRadius = shadowRadius * 3.8f;
+
+    for (int rowIndex = 0; rowIndex < 5; ++rowIndex)
+    {
+        const float baseY = canvasMin.y + (height * (0.18f + (0.16f * static_cast<float>(rowIndex))));
+        std::vector<ImVec2> linePoints;
+        linePoints.reserve(44);
+        for (int sampleIndex = 0; sampleIndex < 44; ++sampleIndex)
         {
-            continue;
+            const float x = canvasMin.x + (width * (static_cast<float>(sampleIndex) / 43.0f));
+            linePoints.push_back(ApplyOpticalWarp(ImVec2(x, baseY), centerScreen, shadowRadius, influenceRadius, warpStrength));
         }
 
-        const float size = 1.1f + (0.9f * (0.5f + (0.5f * std::cos(phase * 3.0f))));
-        const ImVec4 particleColor = MixColor(hotCore, warmBand, 0.35f + (0.45f * radiusBlend));
-        DrawEmissiveDot(drawList, particleScreen, size, particleColor, 0.58f);
+        DrawPathPolyline(drawList, linePoints, terminalPalette.structuralText, 1.0f, 0.20f);
     }
+
+    for (int columnIndex = 0; columnIndex < 4; ++columnIndex)
+    {
+        const float baseX = canvasMin.x + (width * (0.18f + (0.18f * static_cast<float>(columnIndex))));
+        std::vector<ImVec2> linePoints;
+        linePoints.reserve(34);
+        for (int sampleIndex = 0; sampleIndex < 34; ++sampleIndex)
+        {
+            const float y = canvasMin.y + (height * (static_cast<float>(sampleIndex) / 33.0f));
+            linePoints.push_back(ApplyOpticalWarp(ImVec2(baseX, y), centerScreen, shadowRadius, influenceRadius, warpStrength));
+        }
+
+        DrawPathPolyline(drawList, linePoints, terminalPalette.structuralText, 1.0f, 0.12f);
+    }
+
+    for (int starIndex = 0; starIndex < 28; ++starIndex)
+    {
+        const float baseX = canvasMin.x + (HashUnit(0x1f3d5a2U + static_cast<unsigned int>(starIndex) * 17U) * width);
+        const float baseY = canvasMin.y + (HashUnit(0x8a3c91U + static_cast<unsigned int>(starIndex) * 29U) * height);
+        const ImVec2 warped = ApplyOpticalWarp(
+            ImVec2(baseX, baseY),
+            centerScreen,
+            shadowRadius,
+            influenceRadius,
+            warpStrength * 0.72f);
+        const float twinkle = 0.70f + (0.30f * std::sin(static_cast<float>(frameState.uptimeSeconds) * 0.55f + static_cast<float>(starIndex)));
+        const ImVec4 starColor = MixColor(terminalPalette.headerText, schematicPalette.accentPrimary, 0.24f);
+        DrawEmissiveDot(drawList, warped, 0.8f + (HashUnit(0x55aa13U + static_cast<unsigned int>(starIndex) * 7U) * 0.8f), starColor, 0.24f * twinkle);
+    }
+}
+
+void DrawOpticalSilhouette(
+    ImDrawList* drawList,
+    const FrameVisualState& frameState,
+    const ImVec2& centerScreen,
+    const float shadowRadiusX,
+    const float shadowRadiusY,
+    const float warpStrength)
+{
+    const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const float flicker = 0.96f + (0.04f * std::sin(static_cast<float>(frameState.uptimeSeconds) * 0.8f));
+    const float skew = 0.12f + (0.10f * std::sin(static_cast<float>(frameState.uptimeSeconds) * 0.18f));
+    const ImVec4 haloColor = MixColor(terminalPalette.headerText, ImVec4(1.0f, 0.95f, 0.72f, 1.0f), 0.72f);
+    const ImVec4 bandColor = MixColor(terminalPalette.warningText, ImVec4(1.0f, 0.74f, 0.16f, 1.0f), 0.46f);
+    const ImVec4 shadowRim = MixColor(terminalPalette.warningText, ImVec4(0.24f, 0.10f, 0.02f, 1.0f), 0.52f);
+
+    const std::vector<ImVec2> farHalo = BuildOpticalEllipseLoop(
+        ImVec2(centerScreen.x, centerScreen.y - (shadowRadiusY * 0.36f)),
+        shadowRadiusX * (2.55f + (0.08f * warpStrength)),
+        shadowRadiusY * (1.36f + (0.05f * warpStrength)),
+        0.0f,
+        skew,
+        1.28f,
+        0.58f);
+    const std::vector<ImVec2> midHalo = BuildOpticalEllipseLoop(
+        ImVec2(centerScreen.x, centerScreen.y - (shadowRadiusY * 0.28f)),
+        shadowRadiusX * 2.10f,
+        shadowRadiusY * 1.02f,
+        0.0f,
+        skew * 0.72f,
+        1.18f,
+        0.64f);
+    const std::vector<ImVec2> bandLoop = BuildOpticalEllipseLoop(
+        ImVec2(centerScreen.x, centerScreen.y - (shadowRadiusY * 0.18f)),
+        shadowRadiusX * 1.76f,
+        shadowRadiusY * 0.74f,
+        0.0f,
+        skew * 0.54f,
+        1.10f,
+        0.72f);
+    const std::vector<ImVec2> shadowGlow = BuildOpticalEllipseLoop(
+        centerScreen,
+        shadowRadiusX * 1.08f,
+        shadowRadiusY * 1.06f,
+        shadowRadiusY * 0.04f,
+        skew * 0.18f,
+        1.06f,
+        0.96f);
+    const std::vector<ImVec2> shadowLoop = BuildOpticalEllipseLoop(
+        centerScreen,
+        shadowRadiusX,
+        shadowRadiusY,
+        shadowRadiusY * 0.02f,
+        skew * 0.10f,
+        1.02f,
+        0.94f);
+
+    DrawFilledLoop(drawList, farHalo, haloColor, 0.12f * flicker);
+    DrawFilledLoop(drawList, midHalo, haloColor, 0.20f * flicker);
+    DrawFilledLoop(drawList, bandLoop, bandColor, 0.28f * flicker);
+    DrawFilledLoop(drawList, shadowGlow, shadowRim, 0.18f);
+    DrawFilledLoop(drawList, shadowLoop, ImVec4(0.0f, 0.0f, 0.0f, 1.0f), 0.995f);
+
+    DrawLoopEdges(drawList, bandLoop, centerScreen, haloColor, bandColor, 1.58f * flicker, 1.02f * flicker);
+    DrawLoopEdges(drawList, shadowLoop, centerScreen, haloColor, bandColor, 0.94f * flicker, 0.70f * flicker);
 }
 
 void DrawRegionCallout(
@@ -733,24 +948,33 @@ void DrawViewportOverlay(
     ImDrawList* drawList,
     const ImVec2& canvasMin,
     const ImVec2& canvasMax,
-    const FrameVisualState& frameState)
+    const FrameVisualState& frameState,
+    const SpatialViewMode viewMode,
+    const float warpStrength)
 {
     const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
     const Palette& schematicPalette = rhv::ui::GetPalette(ThemeMode::SchematicTelemetry);
     const float flicker = 0.92f + (0.08f * std::sin(static_cast<float>(frameState.uptimeSeconds) * 2.2f));
+    const std::string subtitle = viewMode == SpatialViewMode::OpticalLensing
+        ? "SCREEN-SPACE LENSING / WARP " + std::to_string(static_cast<int>(warpStrength * 100.0f)) + " PCT"
+        : "STYLISED BAND ONLY / OPTICAL MODE STANDBY";
 
     drawList->AddText(
         ImVec2(canvasMin.x + 10.0f, canvasMin.y + 8.0f),
         rhv::ui::ToU32(terminalPalette.headerText, flicker),
-        "TOY BH REGION / SHADOW BAND");
+        viewMode == SpatialViewMode::OpticalLensing
+            ? "OPTICAL MODE / APPROX LENS VIEW"
+            : "TOY BH REGION / SHADOW BAND");
     drawList->AddText(
         ImVec2(canvasMin.x + 10.0f, canvasMin.y + 24.0f),
         rhv::ui::ToU32(schematicPalette.accentPrimary, 0.92f),
-        "STYLISED BAND ONLY / OPTICAL MODE OFFLINE");
+        subtitle.c_str());
     drawList->AddText(
         ImVec2(canvasMax.x - 230.0f, canvasMax.y - 18.0f),
         rhv::ui::ToU32(terminalPalette.structuralText, 0.84f),
-        "LMB LOCK / RMB ORBIT / WHEEL RANGE");
+        viewMode == SpatialViewMode::OpticalLensing
+            ? "RMB ORBIT / WHEEL RANGE / VIEW MODE SELECT"
+            : "LMB LOCK / RMB ORBIT / WHEEL RANGE");
 }
 
 std::vector<ObserverMarker> BuildObserverMarkers(
@@ -786,6 +1010,7 @@ void UpdateMarkerProjectionAndPicking(
     SpatialViewState& viewState,
     SpatialViewportRenderResult& result,
     const Mat4& viewProjection,
+    const bool allowPicking,
     const ImVec2& canvasMin,
     const ImVec2& canvasMax)
 {
@@ -810,7 +1035,7 @@ void UpdateMarkerProjectionAndPicking(
         }
 
         marker.screenRadius = marker.usesAcceleration ? 8.5f : 7.0f;
-        if (!result.isHovered)
+        if (!result.isHovered || !allowPicking)
         {
             continue;
         }
@@ -827,7 +1052,7 @@ void UpdateMarkerProjectionAndPicking(
         }
     }
 
-    if (result.isHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+    if (allowPicking && result.isHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
     {
         if (viewState.hoveredObserverIndex >= 0)
         {
@@ -975,6 +1200,7 @@ SpatialViewportRenderResult DrawSpatialViewport(
     InitializeViewState(viewState, regionModel);
 
     SpatialViewportRenderResult result{};
+    result.viewMode = viewState.viewMode;
     result.snapshotCoordinateTime = static_cast<float>(scene.properTimeWindow.coordinateTimeStart);
 
     ImGui::PushID(widgetId);
@@ -1002,61 +1228,108 @@ SpatialViewportRenderResult DrawSpatialViewport(
         const Mat4 view = MakeLookAt(cameraPosition, target, Vec3{0.0f, 1.0f, 0.0f});
         const Mat4 viewProjection = Multiply(projection, view);
 
-        const std::vector<Segment3D> segments = BuildSceneSegments(frameState, regionModel);
-        DrawSceneSegments(drawList, segments, viewProjection, canvasMin, canvasMax);
-        DrawAccretionStructure(drawList, frameState, regionModel, viewProjection, canvasMin, canvasMax);
-
         std::vector<ObserverMarker> markers = BuildObserverMarkers(scene, result.snapshotCoordinateTime);
-        UpdateMarkerProjectionAndPicking(markers, viewState, result, viewProjection, canvasMin, canvasMax);
+        const bool allowPicking = viewState.viewMode == SpatialViewMode::RegionOverview;
+        UpdateMarkerProjectionAndPicking(markers, viewState, result, viewProjection, allowPicking, canvasMin, canvasMax);
         UpdateDisplayTarget(markers, regionModel, static_cast<int>(causalSelectedObserverIndex), viewState, result);
-        DrawObserverMarkers(
-            drawList,
-            markers,
-            scene,
-            static_cast<int>(causalSelectedObserverIndex),
-            result,
+        const Vec3 regionCenter{regionModel.centerX, regionModel.centerY, regionModel.centerZ};
+        const float shadowRadiusX = ComputeProjectedRadius(
+            regionCenter,
+            Vec3{regionModel.shadowRadius, 0.0f, 0.0f},
+            viewProjection,
             canvasMin,
             canvasMax);
+        const float shadowRadiusY = ComputeProjectedRadius(
+            regionCenter,
+            Vec3{0.0f, regionModel.shadowRadius, 0.0f},
+            viewProjection,
+            canvasMin,
+            canvasMax);
+        result.shadowScreenRadius = std::max(shadowRadiusX, shadowRadiusY);
+        result.opticalWarpStrength = std::clamp(
+            0.62f +
+                (0.18f * std::abs(std::sin(viewState.yawRadians))) +
+                (0.16f * std::abs(viewState.pitchRadians)) +
+                ((14.0f - std::min(viewState.distance, 14.0f)) * 0.04f),
+            0.55f,
+            1.24f);
 
-        ImVec2 horizonAnchor{};
-        if (ProjectToScreen(
-                Vec3{regionModel.centerX + regionModel.horizonRadius, regionModel.centerY, regionModel.centerZ},
-                viewProjection,
-                canvasMin,
-                canvasMax,
-                horizonAnchor))
+        if (viewState.viewMode == SpatialViewMode::OpticalLensing)
         {
-            DrawRegionCallout(
+            ImVec2 centerScreen{};
+            if (ProjectToScreen(regionCenter, viewProjection, canvasMin, canvasMax, centerScreen))
+            {
+                DrawOpticalBackground(
+                    drawList,
+                    frameState,
+                    canvasMin,
+                    canvasMax,
+                    centerScreen,
+                    std::max(16.0f, result.shadowScreenRadius),
+                    result.opticalWarpStrength);
+                DrawOpticalSilhouette(
+                    drawList,
+                    frameState,
+                    centerScreen,
+                    std::max(18.0f, shadowRadiusX),
+                    std::max(10.0f, shadowRadiusY),
+                    result.opticalWarpStrength);
+            }
+        }
+        else
+        {
+            const std::vector<Segment3D> segments = BuildSceneSegments(frameState, regionModel);
+            DrawSceneSegments(drawList, segments, viewProjection, canvasMin, canvasMax);
+            DrawAccretionStructure(drawList, frameState, regionModel, viewProjection, canvasMin, canvasMax);
+            DrawObserverMarkers(
                 drawList,
-                horizonAnchor,
+                markers,
+                scene,
+                static_cast<int>(causalSelectedObserverIndex),
+                result,
                 canvasMin,
-                canvasMax,
-                "TOY HORIZON SHELL",
-                "PEDAGOGICAL REGION ONLY",
-                rhv::ui::GetPalette(ThemeMode::TerminalBase).activeText,
-                52.0f);
+                canvasMax);
+
+            ImVec2 horizonAnchor{};
+            if (ProjectToScreen(
+                    Vec3{regionModel.centerX + regionModel.horizonRadius, regionModel.centerY, regionModel.centerZ},
+                    viewProjection,
+                    canvasMin,
+                    canvasMax,
+                    horizonAnchor))
+            {
+                DrawRegionCallout(
+                    drawList,
+                    horizonAnchor,
+                    canvasMin,
+                    canvasMax,
+                    "TOY HORIZON SHELL",
+                    "PEDAGOGICAL REGION ONLY",
+                    rhv::ui::GetPalette(ThemeMode::TerminalBase).activeText,
+                    52.0f);
+            }
+
+            ImVec2 cautionAnchor{};
+            if (ProjectToScreen(
+                    Vec3{regionModel.centerX, regionModel.centerY, regionModel.centerZ + regionModel.cautionRadius},
+                    viewProjection,
+                    canvasMin,
+                    canvasMax,
+                    cautionAnchor))
+            {
+                DrawRegionCallout(
+                    drawList,
+                    cautionAnchor,
+                    canvasMin,
+                    canvasMax,
+                    "CAUTION BAND",
+                    "HAZARDOUS TOY ZONE",
+                    rhv::ui::GetPalette(ThemeMode::TerminalBase).warningText,
+                    104.0f);
+            }
         }
 
-        ImVec2 cautionAnchor{};
-        if (ProjectToScreen(
-                Vec3{regionModel.centerX, regionModel.centerY, regionModel.centerZ + regionModel.cautionRadius},
-                viewProjection,
-                canvasMin,
-                canvasMax,
-                cautionAnchor))
-        {
-            DrawRegionCallout(
-                drawList,
-                cautionAnchor,
-                canvasMin,
-                canvasMax,
-                "CAUTION BAND",
-                "HAZARDOUS TOY ZONE",
-                rhv::ui::GetPalette(ThemeMode::TerminalBase).warningText,
-                104.0f);
-        }
-
-        DrawViewportOverlay(drawList, canvasMin, canvasMax, frameState);
+        DrawViewportOverlay(drawList, canvasMin, canvasMax, frameState, viewState.viewMode, result.opticalWarpStrength);
     }
 
     result.yawDegrees = viewState.yawRadians * (180.0f / kPi);

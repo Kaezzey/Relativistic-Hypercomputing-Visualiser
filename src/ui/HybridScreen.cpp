@@ -465,6 +465,17 @@ std::string FormatSpatialRadiusLabel(const float radius)
     return stream.str();
 }
 
+std::string FormatOpticalWarpLabel(
+    const float warpStrength,
+    const float shadowScreenRadius)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2)
+           << "W=" << warpStrength
+           << " / SHADOW PX " << shadowScreenRadius;
+    return stream.str();
+}
+
 std::string FormatSpatialCoordinateLabel(
     const InertialObserver& observer,
     const float coordinateTime)
@@ -497,6 +508,13 @@ std::string FormatSpatialPickLabel(
     const InertialObserver& observer,
     const rhv::render3d::SpatialViewportRenderResult& renderResult)
 {
+    if (renderResult.viewMode == rhv::models::SpatialViewMode::OpticalLensing)
+    {
+        return renderResult.isInspectorLocked
+            ? observer.observerId + " / LOCKED FEED"
+            : observer.observerId + " / MARKERS SUPPRESSED";
+    }
+
     if (renderResult.isInspectorLocked)
     {
         return observer.observerId + " / LOCAL LOCK";
@@ -510,6 +528,24 @@ std::string FormatSpatialPickLabel(
     return observer.observerId + " / CAUSAL FEED";
 }
 
+bool DrawModeSelectorButton(
+    const char* label,
+    const bool isSelected,
+    const ImVec4& accentColor)
+{
+    const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 3.0f));
+    ImGui::PushStyleColor(ImGuiCol_Button, isSelected ? palette.panelRaised : palette.panelBackground);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(accentColor.x, accentColor.y, accentColor.z, isSelected ? 0.30f : 0.18f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(accentColor.x, accentColor.y, accentColor.z, 0.34f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(accentColor.x, accentColor.y, accentColor.z, isSelected ? 0.96f : 0.58f));
+    ImGui::PushStyleColor(ImGuiCol_Text, isSelected ? accentColor : palette.bodyText);
+    const bool pressed = ImGui::Button(label);
+    ImGui::PopStyleColor(5);
+    ImGui::PopStyleVar();
+    return pressed;
+}
+
 void DrawSpatialViewPanel(
     const FrameVisualState& frameState,
     const rhv::models::MinkowskiDiagramScene& scene,
@@ -519,17 +555,48 @@ void DrawSpatialViewPanel(
     rhv::models::SpatialViewState& spatialViewState)
 {
     const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const bool initialOpticalMode = spatialViewState.viewMode == rhv::models::SpatialViewMode::OpticalLensing;
+    auto drawModeRows = [&](const bool opticalMode)
+    {
+        rhv::ui::DrawStatusRow(
+            "VIEW MODE",
+            opticalMode ? "OPTICAL MODE / APPROX CAMERA LENS" : operationalState.spatialViewMode,
+            terminalPalette.warningText,
+            116.0f);
+        rhv::ui::DrawStatusRow(
+            "REGION STATE",
+            opticalMode ? "LENS DISTORTION ONLINE / CLEAN CAMERA VIEW" : operationalState.spatialStatus,
+            terminalPalette.structuralText,
+            116.0f);
+        rhv::ui::DrawStatusRow(
+            "LENS STATE",
+            opticalMode ? "OPTICAL MODE ONLINE / SCREEN-SPACE APPROXIMATION" : operationalState.lensState,
+            terminalPalette.warningText,
+            116.0f);
+    };
 
-    rhv::ui::DrawStatusRow("VIEW MODE", operationalState.spatialViewMode, terminalPalette.warningText, 116.0f);
-    rhv::ui::DrawStatusRow("REGION STATE", operationalState.spatialStatus, terminalPalette.structuralText, 116.0f);
-    rhv::ui::DrawStatusRow("LENS STATE", operationalState.lensState, terminalPalette.warningText, 116.0f);
+    drawModeRows(initialOpticalMode);
+
+    if (DrawModeSelectorButton("REGION OVERVIEW", !initialOpticalMode, terminalPalette.warningText))
+    {
+        spatialViewState.viewMode = rhv::models::SpatialViewMode::RegionOverview;
+    }
+    ImGui::SameLine();
+    if (DrawModeSelectorButton("OPTICAL MODE", initialOpticalMode, terminalPalette.activeText))
+    {
+        spatialViewState.viewMode = rhv::models::SpatialViewMode::OpticalLensing;
+    }
+
+    const bool isOpticalMode = spatialViewState.viewMode == rhv::models::SpatialViewMode::OpticalLensing;
 
     rhv::ui::DrawWrappedNote(
         "MODEL WARN",
-        regionModel.simplificationNote.c_str(),
+        isOpticalMode
+            ? "Approximate optical mode only. Background warp and shadow-band silhouette are screen-space teaching visuals, not full GR ray tracing."
+            : regionModel.simplificationNote.c_str(),
         ThemeMode::TerminalBase);
 
-    const float canvasHeight = std::max(120.0f, ImGui::GetContentRegionAvail().y - 192.0f);
+    const float canvasHeight = std::max(110.0f, ImGui::GetContentRegionAvail().y - 214.0f);
     const rhv::render3d::SpatialViewportRenderResult renderResult =
         rhv::render3d::DrawSpatialViewport(
             frameState,
@@ -547,13 +614,23 @@ void DrawSpatialViewPanel(
             static_cast<int>(scene.observers.size() - 1U)));
     const InertialObserver& displayObserver = scene.observers[displayObserverIndex];
 
-    rhv::ui::DrawLabelChip("REGION SHELLS", terminalPalette.warningText, ThemeMode::TerminalBase);
-    ImGui::SameLine();
-    rhv::ui::DrawLabelChip("OBSERVER MARKERS", terminalPalette.activeText, ThemeMode::TerminalBase);
+    rhv::ui::DrawLabelChip(
+        renderResult.viewMode == rhv::models::SpatialViewMode::OpticalLensing ? "OPTICAL GRID" : "REGION SHELLS",
+        terminalPalette.warningText,
+        ThemeMode::TerminalBase);
     ImGui::SameLine();
     rhv::ui::DrawLabelChip(
-        renderResult.isInspectorLocked ? "LOCAL LOCK" : "CAUSAL FEED",
-        renderResult.isInspectorLocked ? terminalPalette.warningText : terminalPalette.structuralText,
+        renderResult.viewMode == rhv::models::SpatialViewMode::OpticalLensing ? "SHADOW BAND" : "OBSERVER MARKERS",
+        terminalPalette.activeText,
+        ThemeMode::TerminalBase);
+    ImGui::SameLine();
+    rhv::ui::DrawLabelChip(
+        renderResult.viewMode == rhv::models::SpatialViewMode::OpticalLensing
+            ? "APPROX LENS"
+            : (renderResult.isInspectorLocked ? "LOCAL LOCK" : "CAUSAL FEED"),
+        renderResult.viewMode == rhv::models::SpatialViewMode::OpticalLensing
+            ? terminalPalette.warningText
+            : (renderResult.isInspectorLocked ? terminalPalette.warningText : terminalPalette.structuralText),
         ThemeMode::TerminalBase);
 
     rhv::ui::DrawStatusRow(
@@ -587,6 +664,11 @@ void DrawSpatialViewPanel(
         "PLACEMENT",
         FormatSpatialMotionLabel(displayObserver, renderResult.snapshotCoordinateTime),
         terminalPalette.structuralText,
+        116.0f);
+    rhv::ui::DrawStatusRow(
+        "OPTIC",
+        FormatOpticalWarpLabel(renderResult.opticalWarpStrength, renderResult.shadowScreenRadius),
+        renderResult.viewMode == rhv::models::SpatialViewMode::OpticalLensing ? terminalPalette.warningText : terminalPalette.structuralText,
         116.0f);
     rhv::ui::DrawStatusRow(
         "REGION REL",
@@ -811,6 +893,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
         telemetry,
         frameState,
         scene,
+        spatialViewState.viewMode,
         viewState.selectedObserverIndex,
         viewState.selectedEventIndex);
 
@@ -830,6 +913,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
         telemetry,
         frameState,
         scene,
+        spatialViewState.viewMode,
         viewState.selectedObserverIndex,
         viewState.selectedEventIndex);
 
@@ -847,6 +931,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
                 telemetry,
                 frameState,
                 scene,
+                spatialViewState.viewMode,
                 viewState.selectedObserverIndex,
                 viewState.selectedEventIndex);
         }
@@ -882,6 +967,14 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
             spatialViewState);
     }
     EndManagedPanel();
+
+    operationalState = rhv::core::BuildOperationalState(
+        telemetry,
+        frameState,
+        scene,
+        spatialViewState.viewMode,
+        viewState.selectedObserverIndex,
+        viewState.selectedEventIndex);
 
     if (BeginManagedPanel(
             "system_state_panel",

@@ -18,6 +18,7 @@ using rhv::models::InertialObserver;
 using rhv::models::MinkowskiDiagramScene;
 using rhv::models::ObserverTelemetry;
 using rhv::models::OperationalState;
+using rhv::models::SpatialViewMode;
 using rhv::models::SpacetimeEvent;
 using rhv::models::StatusBadge;
 using rhv::models::SymbolConvention;
@@ -197,6 +198,7 @@ models::OperationalState BuildOperationalState(
     const BootTelemetry& telemetry,
     const FrameVisualState& frameState,
     const MinkowskiDiagramScene& scene,
+    const SpatialViewMode spatialViewMode,
     const std::size_t selectedObserverIndex,
     const std::size_t selectedEventIndex)
 {
@@ -208,6 +210,7 @@ models::OperationalState BuildOperationalState(
     const InertialObserver& selectedObserver = scene.observers[observerIndex];
     const SpacetimeEvent& selectedEvent = scene.events[eventIndex];
     const bool selectedObserverUsesAcceleration = SelectedObserverUsesAcceleration(selectedObserver);
+    const bool isOpticalMode = spatialViewMode == SpatialViewMode::OpticalLensing;
     const rhv::core::SignalPropagationReport signalReport =
         rhv::core::ComputeSignalPropagation(scene, observerIndex, eventIndex);
 
@@ -218,44 +221,56 @@ models::OperationalState BuildOperationalState(
         ? "DISPLAY STANDBY / INPUT HOLD"
         : (isBootTransient
             ? "BOOT TRANSIENT / TELEMETRY PARTIAL"
-            : (selectedObserverUsesAcceleration
-                ? "PEDAGOGICAL ACCEL / HORIZON GUIDE ACTIVE"
-                : "TOY MODEL / 2D CAUSAL + 3D BH REGION"));
+            : (isOpticalMode
+                ? "OPTICAL MODE / APPROX LENSING ACTIVE"
+                : (selectedObserverUsesAcceleration
+                    ? "PEDAGOGICAL ACCEL / HORIZON GUIDE ACTIVE"
+                    : "TOY MODEL / 2D CAUSAL + 3D BH REGION")));
     state.commandLine = !isDisplayFocused
         ? "CMD > INPUT HOLD / OPERATOR AWAY"
         : (isBootTransient
             ? "CMD > WAIT / DISPLAY BUS ARMING"
-            : (selectedObserverUsesAcceleration
-                ? "CMD > CAUSAL LMB SELECT / SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE / TRACE ACCEL HORIZON / QUERY REGION"
-                : "CMD > CAUSAL LMB SELECT / SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE / TRACE NULL TX / QUERY REGION"));
+            : (isOpticalMode
+                ? "CMD > VIEW MODE SELECT / RMB ORBIT / WHEEL RANGE / TRACK OPTICAL DISTORTION"
+                : (selectedObserverUsesAcceleration
+                    ? "CMD > CAUSAL LMB SELECT / SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE / TRACE ACCEL HORIZON / QUERY REGION"
+                    : "CMD > CAUSAL LMB SELECT / SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE / TRACE NULL TX / QUERY REGION")));
     state.commandState = !isDisplayFocused
         ? "CMD BUS PARKED"
-        : (selectedObserverUsesAcceleration
-            ? "ACCEL GUIDE LIVE / 3D REGION ONLINE"
-            : "NULL TX LIVE / 3D REGION ONLINE");
+        : (isOpticalMode
+            ? "OPTICAL VIEW LIVE / APPROX LENSING ONLINE"
+            : (selectedObserverUsesAcceleration
+                ? "ACCEL GUIDE LIVE / 3D REGION ONLINE"
+                : "NULL TX LIVE / 3D REGION ONLINE"));
     state.activeScreen = "HYBRID ANALYSIS";
     state.modelState = selectedObserverUsesAcceleration
         ? "FLAT SPACETIME / ACCEL TOY / RINDLER GUIDE / C = 1"
         : "FLAT SPACETIME / INERTIAL WORLDLINES / C = 1 / NULL TX LIVE";
     state.viewLinkState = !isDisplayFocused
         ? "SYNC DEGRADED / STANDBY"
-        : (isBootTransient ? "SYNC ACQUIRING" : "2D ACTIVE / 3D REGION LIVE");
+        : (isBootTransient ? "SYNC ACQUIRING" : (isOpticalMode ? "2D ACTIVE / 3D OPTICAL LIVE" : "2D ACTIVE / 3D REGION LIVE"));
     state.causalViewMode = selectedObserverUsesAcceleration
         ? "MINKOWSKI MAP / ACCEL TRACE + SIGNALS"
         : "MINKOWSKI MAP / WORLDLINES + SIGNALS";
     state.causalStatus = selectedObserverUsesAcceleration
         ? "HORIZON GUIDE ACTIVE / CAUSAL ACCESS SHIFTING"
         : "NULL TX ONLINE / LINK QUERY ACTIVE";
-    state.spatialViewMode = "TOY BH REGION / OBSERVER SNAPSHOT";
-    state.spatialStatus = "HORIZON SHELL + SHADOW BAND / REGION MAP ACTIVE";
-    state.lensState = "OPTICAL MODE OFFLINE / SHADOW BAND IS STYLISED";
+    state.spatialViewMode = isOpticalMode
+        ? "OPTICAL MODE / APPROX CAMERA LENS"
+        : "TOY BH REGION / OBSERVER SNAPSHOT";
+    state.spatialStatus = isOpticalMode
+        ? "LENS DISTORTION ONLINE / CLEAN CAMERA VIEW"
+        : "HORIZON SHELL + SHADOW BAND / REGION MAP ACTIVE";
+    state.lensState = isOpticalMode
+        ? "OPTICAL MODE ONLINE / SCREEN-SPACE APPROXIMATION"
+        : "OPTICAL MODE STANDBY / REGION VIEW ACTIVE";
 
     state.commandBadges = {
         StatusBadge{bootPhase.phase, bootPhase.tone, false},
         StatusBadge{state.activeScreen, Tone::Active, false},
         StatusBadge{selectedObserver.observerId, ResolveObserverSelectionTone(selectedObserver), false},
         StatusBadge{
-            "BH REGION",
+            isOpticalMode ? "OPTICAL MODE" : "BH REGION",
             Tone::Warning,
             false},
     };
@@ -316,7 +331,9 @@ models::OperationalState BuildOperationalState(
             signalReport.validObserverLinkCount > 0 ? Tone::Active : Tone::Warning},
         EventLogEntry{
             "CTL-06",
-            "CAUSAL LMB SELECT. SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE. QUERY REGION SHELLS AND STYLISED SHADOW BAND. DISPLAY SIZE " +
+            (isOpticalMode
+                ? "VIEW MODE SELECT. RMB ORBIT / WHEEL RANGE. OPTICAL CAMERA USES APPROX SCREEN-SPACE LENS DISTORTION. DISPLAY SIZE "
+                : "CAUSAL LMB SELECT. SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE. QUERY REGION SHELLS AND STYLISED SHADOW BAND. DISPLAY SIZE ") +
                 std::to_string(telemetry.framebufferWidth) + " X " +
                 std::to_string(telemetry.framebufferHeight) + ".",
             Tone::Muted},
@@ -339,9 +356,11 @@ models::OperationalState BuildOperationalState(
 
     if (!isBootTransient)
     {
-        state.eventLog[0].message = selectedObserverUsesAcceleration
-            ? "BOOT PHASE STABLE. ACCELERATION DEMO SCENE AND 3D TOY BH REGION SILHOUETTE ONLINE."
-            : "BOOT PHASE STABLE. WORLDLINE SIGNAL DEMO SCENE AND 3D TOY BH REGION SILHOUETTE ONLINE.";
+        state.eventLog[0].message = isOpticalMode
+            ? "BOOT PHASE STABLE. WORLDLINE SIGNAL DEMO SCENE AND 3D OPTICAL DISTORTION MODE ONLINE."
+            : (selectedObserverUsesAcceleration
+                ? "BOOT PHASE STABLE. ACCELERATION DEMO SCENE AND 3D TOY BH REGION SILHOUETTE ONLINE."
+                : "BOOT PHASE STABLE. WORLDLINE SIGNAL DEMO SCENE AND 3D TOY BH REGION SILHOUETTE ONLINE.");
     }
 
     state.eventLog[5].message += " " + BuildFrameClockLabel(frameState) + ".";
