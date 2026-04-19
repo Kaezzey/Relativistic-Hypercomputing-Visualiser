@@ -1,6 +1,7 @@
 #include "render3d/SpatialViewportRenderer.h"
 
 #include "core/ObserverMotion.h"
+#include "core/ToyBlackHoleSpatialModel.h"
 #include "ui/Theme.h"
 
 #include <imgui.h>
@@ -18,6 +19,7 @@ using rhv::models::MinkowskiDiagramScene;
 using rhv::models::ObserverWorldline;
 using rhv::models::SpatialViewState;
 using rhv::models::Tone;
+using rhv::models::ToyBlackHoleRegionModel;
 using rhv::render3d::SpatialViewportRenderResult;
 using rhv::ui::Palette;
 using rhv::ui::ThemeMode;
@@ -215,18 +217,9 @@ void PushWireCube(
         Vec3{center.x + extent, center.y + extent, center.z + extent},
         Vec3{center.x - extent, center.y + extent, center.z + extent}};
     const std::array<std::array<int, 2>, 12> edges{
-        std::array<int, 2>{0, 1},
-        std::array<int, 2>{1, 2},
-        std::array<int, 2>{2, 3},
-        std::array<int, 2>{3, 0},
-        std::array<int, 2>{4, 5},
-        std::array<int, 2>{5, 6},
-        std::array<int, 2>{6, 7},
-        std::array<int, 2>{7, 4},
-        std::array<int, 2>{0, 4},
-        std::array<int, 2>{1, 5},
-        std::array<int, 2>{2, 6},
-        std::array<int, 2>{3, 7},
+        std::array<int, 2>{0, 1}, std::array<int, 2>{1, 2}, std::array<int, 2>{2, 3}, std::array<int, 2>{3, 0},
+        std::array<int, 2>{4, 5}, std::array<int, 2>{5, 6}, std::array<int, 2>{6, 7}, std::array<int, 2>{7, 4},
+        std::array<int, 2>{0, 4}, std::array<int, 2>{1, 5}, std::array<int, 2>{2, 6}, std::array<int, 2>{3, 7},
     };
 
     for (const auto& edge : edges)
@@ -235,11 +228,12 @@ void PushWireCube(
     }
 }
 
-void PushRing(
+void PushCircleInPlane(
     std::vector<Segment3D>& segments,
     const Vec3& center,
     const float radius,
     const int segmentCount,
+    const int plane,
     const ImVec4& color,
     const float intensity)
 {
@@ -248,32 +242,44 @@ void PushRing(
         const float startAngle = (static_cast<float>(segment) / static_cast<float>(segmentCount)) * (2.0f * kPi);
         const float endAngle = (static_cast<float>(segment + 1) / static_cast<float>(segmentCount)) * (2.0f * kPi);
 
-        PushSegment(
-            segments,
-            Vec3{center.x + (std::cos(startAngle) * radius), center.y, center.z + (std::sin(startAngle) * radius)},
-            Vec3{center.x + (std::cos(endAngle) * radius), center.y, center.z + (std::sin(endAngle) * radius)},
-            color,
-            intensity);
+        Vec3 start = center;
+        Vec3 end = center;
+        if (plane == 0)
+        {
+            start.x += std::cos(startAngle) * radius;
+            start.y += std::sin(startAngle) * radius;
+            end.x += std::cos(endAngle) * radius;
+            end.y += std::sin(endAngle) * radius;
+        }
+        else if (plane == 1)
+        {
+            start.x += std::cos(startAngle) * radius;
+            start.z += std::sin(startAngle) * radius;
+            end.x += std::cos(endAngle) * radius;
+            end.z += std::sin(endAngle) * radius;
+        }
+        else
+        {
+            start.y += std::cos(startAngle) * radius;
+            start.z += std::sin(startAngle) * radius;
+            end.y += std::cos(endAngle) * radius;
+            end.z += std::sin(endAngle) * radius;
+        }
+
+        PushSegment(segments, start, end, color, intensity);
     }
 }
 
-void PushPortalFrame(
+void PushSphereRings(
     std::vector<Segment3D>& segments,
-    const float z,
-    const float halfWidth,
-    const float halfHeight,
+    const Vec3& center,
+    const float radius,
     const ImVec4& color,
     const float intensity)
 {
-    const Vec3 a{-halfWidth, 0.0f, z};
-    const Vec3 b{halfWidth, 0.0f, z};
-    const Vec3 c{halfWidth, halfHeight, z};
-    const Vec3 d{-halfWidth, halfHeight, z};
-
-    PushSegment(segments, a, b, color, intensity);
-    PushSegment(segments, b, c, color, intensity);
-    PushSegment(segments, c, d, color, intensity);
-    PushSegment(segments, d, a, color, intensity);
+    PushCircleInPlane(segments, center, radius, 40, 0, color, intensity);
+    PushCircleInPlane(segments, center, radius, 40, 1, color, intensity);
+    PushCircleInPlane(segments, center, radius, 40, 2, color, intensity);
 }
 
 ImVec4 ResolveObserverColor(const Palette& palette, const Tone tone)
@@ -293,46 +299,71 @@ ImVec4 ResolveObserverColor(const Palette& palette, const Tone tone)
     return palette.bodyText;
 }
 
-std::vector<Segment3D> BuildReferenceScene(const FrameVisualState& frameState)
+std::string MakeObserverTag(const ObserverWorldline& observer)
+{
+    if (observer.observerId.rfind("OBSERVER ", 0) == 0 && observer.observerId.size() > 9U)
+    {
+        return "OBS " + observer.observerId.substr(9U);
+    }
+
+    return observer.observerId;
+}
+
+std::vector<Segment3D> BuildSceneSegments(
+    const FrameVisualState& frameState,
+    const ToyBlackHoleRegionModel& regionModel)
 {
     const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
     const Palette& schematicPalette = rhv::ui::GetPalette(ThemeMode::SchematicTelemetry);
-    const float pulse = 0.95f + (0.20f * std::sin(static_cast<float>(frameState.uptimeSeconds) * 1.4f));
+    const float pulse = 0.95f + (0.22f * std::sin(static_cast<float>(frameState.uptimeSeconds) * 1.4f));
 
-    const ImVec4 gridMinor(terminalPalette.mutedText.x, terminalPalette.mutedText.y, terminalPalette.mutedText.z, 0.36f);
-    const ImVec4 gridMajor(terminalPalette.structuralText.x, terminalPalette.structuralText.y, terminalPalette.structuralText.z, 0.50f);
+    const ImVec4 gridMinor(terminalPalette.mutedText.x, terminalPalette.mutedText.y, terminalPalette.mutedText.z, 0.34f);
+    const ImVec4 gridMajor(terminalPalette.structuralText.x, terminalPalette.structuralText.y, terminalPalette.structuralText.z, 0.48f);
     const ImVec4 xAxis(terminalPalette.warningText.x, terminalPalette.warningText.y, terminalPalette.warningText.z, 1.00f);
     const ImVec4 yAxis(terminalPalette.activeText.x, terminalPalette.activeText.y, terminalPalette.activeText.z, 1.00f);
     const ImVec4 zAxis(terminalPalette.headerText.x, terminalPalette.headerText.y, terminalPalette.headerText.z, 0.96f);
-    const ImVec4 cubeColor(terminalPalette.activeText.x, terminalPalette.activeText.y, terminalPalette.activeText.z, 0.96f);
-    const ImVec4 ringColor(terminalPalette.warningText.x, terminalPalette.warningText.y, terminalPalette.warningText.z, 0.90f);
-    const ImVec4 accentColor(schematicPalette.accentSecondary.x, schematicPalette.accentSecondary.y, schematicPalette.accentSecondary.z, 0.64f);
-    const ImVec4 beaconColor(terminalPalette.activeText.x, terminalPalette.activeText.y, terminalPalette.activeText.z, pulse);
+    const ImVec4 shellOuter(schematicPalette.accentSecondary.x, schematicPalette.accentSecondary.y, schematicPalette.accentSecondary.z, 0.64f);
+    const ImVec4 shellCaution(terminalPalette.warningText.x, terminalPalette.warningText.y, terminalPalette.warningText.z, 0.92f);
+    const ImVec4 shellHorizon(terminalPalette.activeText.x, terminalPalette.activeText.y, terminalPalette.activeText.z, 1.00f);
+    const ImVec4 shellCore(terminalPalette.warningText.x, terminalPalette.warningText.y * 0.82f, 0.18f, pulse);
+    const ImVec4 referenceCube(terminalPalette.activeText.x, terminalPalette.activeText.y, terminalPalette.activeText.z, 0.90f);
 
     std::vector<Segment3D> segments;
-    segments.reserve(240U);
+    segments.reserve(420U);
 
-    constexpr int gridHalfExtent = 6;
+    constexpr int gridHalfExtent = 7;
     for (int index = -gridHalfExtent; index <= gridHalfExtent; ++index)
     {
         const ImVec4 color = (index == 0 || (index % 2) == 0) ? gridMajor : gridMinor;
-        const float intensity = (index == 0 || (index % 2) == 0) ? 1.10f : 0.78f;
-        PushSegment(segments, Vec3{-6.5f, 0.0f, static_cast<float>(index)}, Vec3{6.5f, 0.0f, static_cast<float>(index)}, color, intensity);
-        PushSegment(segments, Vec3{static_cast<float>(index), 0.0f, -6.5f}, Vec3{static_cast<float>(index), 0.0f, 6.5f}, color, intensity);
+        const float intensity = (index == 0 || (index % 2) == 0) ? 1.05f : 0.76f;
+        PushSegment(segments, Vec3{-7.0f, 0.0f, static_cast<float>(index)}, Vec3{7.0f, 0.0f, static_cast<float>(index)}, color, intensity);
+        PushSegment(segments, Vec3{static_cast<float>(index), 0.0f, -7.0f}, Vec3{static_cast<float>(index), 0.0f, 7.0f}, color, intensity);
     }
 
-    PushSegment(segments, Vec3{-6.5f, 0.0f, 0.0f}, Vec3{6.5f, 0.0f, 0.0f}, xAxis, 1.60f);
-    PushSegment(segments, Vec3{0.0f, 0.0f, -6.5f}, Vec3{0.0f, 0.0f, 6.5f}, zAxis, 1.40f);
-    PushSegment(segments, Vec3{0.0f, 0.0f, 0.0f}, Vec3{0.0f, 3.4f, 0.0f}, yAxis, 1.55f);
-    PushWireCube(segments, Vec3{2.0f, 0.92f, -1.40f}, 0.72f, cubeColor, 1.35f);
-    PushWireCube(segments, Vec3{-1.95f, 0.62f, 1.70f}, 0.44f, accentColor, 1.25f);
-    PushRing(segments, Vec3{0.0f, 0.01f, 0.0f}, 2.25f, 40, ringColor, 1.35f);
-    PushPortalFrame(segments, -4.0f, 1.45f, 1.65f, accentColor, 1.10f);
-    PushPortalFrame(segments, -2.3f, 1.18f, 1.38f, accentColor, 1.18f);
-    PushPortalFrame(segments, -0.8f, 0.95f, 1.12f, accentColor, 1.24f);
-    PushSegment(segments, Vec3{0.0f, 0.0f, 0.0f}, Vec3{0.0f, 1.52f, 0.0f}, beaconColor, 1.75f);
-    PushSegment(segments, Vec3{-0.18f, 1.52f, 0.0f}, Vec3{0.18f, 1.52f, 0.0f}, beaconColor, 1.75f);
-    PushSegment(segments, Vec3{0.0f, 1.52f, -0.18f}, Vec3{0.0f, 1.52f, 0.18f}, beaconColor, 1.75f);
+    PushSegment(segments, Vec3{-7.0f, 0.0f, 0.0f}, Vec3{7.0f, 0.0f, 0.0f}, xAxis, 1.35f);
+    PushSegment(segments, Vec3{0.0f, 0.0f, -7.0f}, Vec3{0.0f, 0.0f, 7.0f}, zAxis, 1.18f);
+    PushSegment(segments, Vec3{0.0f, 0.0f, 0.0f}, Vec3{0.0f, 3.5f, 0.0f}, yAxis, 1.28f);
+    PushWireCube(segments, Vec3{-2.0f, 0.62f, 1.65f}, 0.42f, referenceCube, 1.18f);
+    PushWireCube(segments, Vec3{1.25f, 0.82f, -1.60f}, 0.62f, referenceCube, 1.28f);
+
+    const Vec3 bhCenter{regionModel.centerX, regionModel.centerY, regionModel.centerZ};
+    PushSphereRings(segments, bhCenter, regionModel.analysisRadius, shellOuter, 1.15f);
+    PushSphereRings(segments, bhCenter, regionModel.cautionRadius, shellCaution, 1.35f);
+    PushSphereRings(segments, bhCenter, regionModel.horizonRadius, shellHorizon, 1.55f);
+    PushSphereRings(segments, bhCenter, regionModel.coreRadius, shellCore, 1.75f);
+
+    PushSegment(
+        segments,
+        Vec3{regionModel.centerX - regionModel.analysisRadius - 1.1f, regionModel.centerY, regionModel.centerZ},
+        Vec3{regionModel.centerX + regionModel.analysisRadius + 0.2f, regionModel.centerY, regionModel.centerZ},
+        shellOuter,
+        1.10f);
+    PushSegment(
+        segments,
+        Vec3{regionModel.centerX, 0.0f, regionModel.centerZ},
+        Vec3{regionModel.centerX, regionModel.centerY + regionModel.analysisRadius + 0.2f, regionModel.centerZ},
+        shellHorizon,
+        1.30f);
 
     return segments;
 }
@@ -344,11 +375,11 @@ void InitializeViewState(SpatialViewState& viewState)
         return;
     }
 
-    viewState.yawRadians = 0.82f;
-    viewState.pitchRadians = 0.48f;
-    viewState.distance = 9.5f;
-    viewState.targetX = 0.0f;
-    viewState.targetY = 0.65f;
+    viewState.yawRadians = 0.72f;
+    viewState.pitchRadians = 0.44f;
+    viewState.distance = 11.2f;
+    viewState.targetX = 2.8f;
+    viewState.targetY = 1.05f;
     viewState.targetZ = 0.0f;
     viewState.lockedObserverIndex = -1;
     viewState.hoveredObserverIndex = -1;
@@ -376,42 +407,42 @@ void UpdateCameraControls(SpatialViewState& viewState, SpatialViewportRenderResu
     ImGuiIO& io = ImGui::GetIO();
     if (std::abs(io.MouseWheel) > 0.001f)
     {
-        viewState.distance = std::clamp(viewState.distance - (io.MouseWheel * 0.80f), 4.2f, 24.0f);
+        viewState.distance = std::clamp(viewState.distance - (io.MouseWheel * 0.90f), 5.0f, 28.0f);
     }
 
     if (ImGui::IsMouseDragging(ImGuiMouseButton_Right, 0.0f))
     {
-        viewState.yawRadians -= io.MouseDelta.x * 0.0105f;
-        viewState.pitchRadians = std::clamp(viewState.pitchRadians - (io.MouseDelta.y * 0.0085f), -0.92f, 1.18f);
+        viewState.yawRadians -= io.MouseDelta.x * 0.0100f;
+        viewState.pitchRadians = std::clamp(viewState.pitchRadians - (io.MouseDelta.y * 0.0080f), -0.82f, 1.08f);
         result.isOrbiting = true;
     }
 }
 
 bool ProjectToScreen(
-    const Mat4& viewProjection,
     const Vec3& point,
-    const ImVec2& canvasOrigin,
-    const ImVec2& canvasSize,
+    const Mat4& viewProjection,
+    const ImVec2& canvasMin,
+    const ImVec2& canvasMax,
     ImVec2& screenPoint)
 {
-    const Vec4 clipPoint = TransformPoint(viewProjection, point);
-    if (clipPoint.w <= 0.05f)
+    const Vec4 clip = TransformPoint(viewProjection, point);
+    if (clip.w <= 0.05f)
     {
         return false;
     }
 
-    const float inverseW = 1.0f / clipPoint.w;
-    const float ndcX = clipPoint.x * inverseW;
-    const float ndcY = clipPoint.y * inverseW;
-    const float ndcZ = clipPoint.z * inverseW;
+    const float inverseW = 1.0f / clip.w;
+    const float ndcX = clip.x * inverseW;
+    const float ndcY = clip.y * inverseW;
+    const float ndcZ = clip.z * inverseW;
 
-    if (ndcZ < -1.2f || ndcZ > 1.2f)
+    if (ndcZ < -1.1f || ndcZ > 1.1f)
     {
         return false;
     }
 
-    screenPoint.x = canvasOrigin.x + ((ndcX + 1.0f) * 0.5f * canvasSize.x);
-    screenPoint.y = canvasOrigin.y + ((1.0f - ndcY) * 0.5f * canvasSize.y);
+    screenPoint.x = canvasMin.x + ((ndcX + 1.0f) * 0.5f * (canvasMax.x - canvasMin.x));
+    screenPoint.y = canvasMin.y + ((1.0f - (ndcY + 1.0f) * 0.5f) * (canvasMax.y - canvasMin.y));
     return true;
 }
 
@@ -422,10 +453,10 @@ void DrawEmissiveLine(
     const ImVec4& color,
     const float intensity)
 {
-    drawList->AddLine(start, end, rhv::ui::ToU32(color, 0.10f * intensity), 7.0f * intensity);
-    drawList->AddLine(start, end, rhv::ui::ToU32(color, 0.20f * intensity), 4.2f * intensity);
-    drawList->AddLine(start, end, rhv::ui::ToU32(color, 0.46f * intensity), 2.2f * intensity);
-    drawList->AddLine(start, end, rhv::ui::ToU32(color, 1.00f), 1.1f);
+    drawList->AddLine(start, end, rhv::ui::ToU32(color, 0.10f * intensity), 11.0f * intensity);
+    drawList->AddLine(start, end, rhv::ui::ToU32(color, 0.18f * intensity), 7.0f * intensity);
+    drawList->AddLine(start, end, rhv::ui::ToU32(color, 0.36f * intensity), 3.6f * intensity);
+    drawList->AddLine(start, end, rhv::ui::ToU32(color, 0.96f), 1.35f * std::max(1.0f, intensity * 0.82f));
 }
 
 void DrawEmissiveCircle(
@@ -435,9 +466,9 @@ void DrawEmissiveCircle(
     const ImVec4& color,
     const float intensity)
 {
-    drawList->AddCircle(center, radius + 5.5f, rhv::ui::ToU32(color, 0.08f * intensity), 32, 5.0f);
-    drawList->AddCircle(center, radius + 2.8f, rhv::ui::ToU32(color, 0.18f * intensity), 32, 2.8f);
-    drawList->AddCircle(center, radius, rhv::ui::ToU32(color, 1.00f), 32, 1.1f);
+    drawList->AddCircle(center, radius + (5.5f * intensity), rhv::ui::ToU32(color, 0.10f * intensity), 28, 7.0f);
+    drawList->AddCircle(center, radius + (2.6f * intensity), rhv::ui::ToU32(color, 0.18f * intensity), 28, 4.0f);
+    drawList->AddCircle(center, radius, rhv::ui::ToU32(color, 0.94f), 28, 1.4f);
 }
 
 void DrawEmissiveDot(
@@ -447,183 +478,232 @@ void DrawEmissiveDot(
     const ImVec4& color,
     const float intensity)
 {
-    drawList->AddCircleFilled(center, radius + 7.0f, rhv::ui::ToU32(color, 0.06f * intensity), 24);
-    drawList->AddCircleFilled(center, radius + 3.8f, rhv::ui::ToU32(color, 0.16f * intensity), 24);
-    drawList->AddCircleFilled(center, radius + 1.2f, rhv::ui::ToU32(color, 0.42f * intensity), 24);
-    drawList->AddCircleFilled(center, radius, rhv::ui::ToU32(color, 1.00f), 24);
+    drawList->AddCircleFilled(center, radius + (6.0f * intensity), rhv::ui::ToU32(color, 0.10f * intensity), 24);
+    drawList->AddCircleFilled(center, radius + (2.8f * intensity), rhv::ui::ToU32(color, 0.24f * intensity), 24);
+    drawList->AddCircleFilled(center, radius, rhv::ui::ToU32(color, 0.98f), 24);
 }
 
-std::string MakeObserverTag(const ObserverWorldline& observer)
+void DrawBackground(
+    ImDrawList* drawList,
+    const ImVec2& canvasMin,
+    const ImVec2& canvasMax,
+    const FrameVisualState& frameState)
 {
-    if (observer.observerId.rfind("OBSERVER ", 0) == 0 && observer.observerId.size() > 9U)
-    {
-        return "OBS " + observer.observerId.substr(9U);
-    }
+    const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const Palette& schematicPalette = rhv::ui::GetPalette(ThemeMode::SchematicTelemetry);
+    const float pulse = 0.92f + (0.08f * std::sin(static_cast<float>(frameState.uptimeSeconds) * 0.85f));
 
-    return observer.observerId;
+    drawList->AddRectFilled(canvasMin, canvasMax, rhv::ui::ToU32(terminalPalette.panelBackground, 1.0f));
+    drawList->AddRectFilledMultiColor(
+        canvasMin,
+        canvasMax,
+        rhv::ui::ToU32(ImVec4(0.03f, 0.025f, 0.02f, 0.84f * pulse)),
+        rhv::ui::ToU32(ImVec4(0.04f, 0.02f, 0.015f, 0.64f)),
+        rhv::ui::ToU32(ImVec4(0.02f, 0.03f, 0.025f, 0.40f)),
+        rhv::ui::ToU32(ImVec4(0.01f, 0.015f, 0.02f, 0.24f)));
+
+    const ImVec2 center((canvasMin.x + canvasMax.x) * 0.5f, (canvasMin.y + canvasMax.y) * 0.42f);
+    drawList->AddCircleFilled(center, 140.0f, rhv::ui::ToU32(schematicPalette.accentPrimary, 0.035f * pulse), 48);
+    drawList->AddRect(canvasMin, canvasMax, rhv::ui::ToU32(terminalPalette.panelBorder, 0.90f), 0.0f, 0, 1.0f);
+    drawList->AddRect(
+        ImVec2(canvasMin.x + 3.0f, canvasMin.y + 3.0f),
+        ImVec2(canvasMax.x - 3.0f, canvasMax.y - 3.0f),
+        rhv::ui::ToU32(terminalPalette.panelRaised, 0.42f),
+        0.0f,
+        0,
+        1.0f);
 }
 
-void DrawObserverCallout(
+void DrawRegionCallout(
     ImDrawList* drawList,
     const ImVec2& anchor,
-    const ImVec2& canvasOrigin,
-    const ImVec2& canvasSize,
-    const ObserverWorldline& observer,
+    const ImVec2& canvasMin,
+    const ImVec2& canvasMax,
+    const char* title,
+    const char* subtitle,
     const ImVec4& color,
-    const bool isLocked)
+    const float verticalOffset)
 {
-    const std::string observerTag = MakeObserverTag(observer);
-    const float labelWidth = 146.0f;
-    const float labelHeight = 40.0f;
-    const bool placeRight = anchor.x < (canvasOrigin.x + (canvasSize.x * 0.58f));
-    const float offsetX = placeRight ? 26.0f : -(labelWidth + 26.0f);
-    const ImVec2 labelMin(anchor.x + offsetX, anchor.y - 28.0f);
-    const ImVec2 labelMax(labelMin.x + labelWidth, labelMin.y + labelHeight);
-    const ImVec4 panelTint(
-        color.x * 0.18f,
-        color.y * 0.18f,
-        color.z * 0.18f,
-        0.72f);
+    const float boxWidth = 176.0f;
+    const float boxHeight = 42.0f;
+    const ImVec2 boxMin(
+        std::max(canvasMin.x + 12.0f, canvasMax.x - boxWidth - 14.0f),
+        std::clamp(canvasMin.y + verticalOffset, canvasMin.y + 16.0f, canvasMax.y - boxHeight - 12.0f));
+    const ImVec2 boxMax(boxMin.x + boxWidth, boxMin.y + boxHeight);
+    const ImVec2 boxJoin(boxMin.x, boxMin.y + (boxHeight * 0.5f));
 
-    DrawEmissiveLine(
-        drawList,
-        anchor,
-        ImVec2(placeRight ? labelMin.x : labelMax.x, labelMin.y + 16.0f),
-        color,
-        1.35f);
-    drawList->AddRectFilled(labelMin, labelMax, rhv::ui::ToU32(panelTint));
-    drawList->AddRect(labelMin, labelMax, rhv::ui::ToU32(color, 1.00f), 0.0f, 0, isLocked ? 1.6f : 1.0f);
+    DrawEmissiveLine(drawList, anchor, boxJoin, color, 0.95f);
+    drawList->AddRectFilled(boxMin, boxMax, rhv::ui::ToU32(ImVec4(0.0f, 0.0f, 0.0f, 0.86f)));
+    drawList->AddRect(boxMin, boxMax, rhv::ui::ToU32(color, 0.96f), 0.0f, 0, 1.1f);
+    drawList->AddRect(
+        ImVec2(boxMin.x + 2.0f, boxMin.y + 2.0f),
+        ImVec2(boxMax.x - 2.0f, boxMax.y - 2.0f),
+        rhv::ui::ToU32(color, 0.34f),
+        0.0f,
+        0,
+        1.0f);
+    drawList->AddText(ImVec2(boxMin.x + 8.0f, boxMin.y + 6.0f), rhv::ui::ToU32(color, 0.98f), title);
+    drawList->AddText(
+        ImVec2(boxMin.x + 8.0f, boxMin.y + 22.0f),
+        rhv::ui::ToU32(ImVec4(color.x, color.y, color.z, 0.72f)),
+        subtitle);
+}
 
-    if (isLocked)
-    {
-        drawList->AddRect(
-            ImVec2(labelMin.x + 3.0f, labelMin.y + 3.0f),
-            ImVec2(labelMax.x - 3.0f, labelMax.y - 3.0f),
-            rhv::ui::ToU32(color, 0.85f),
-            0.0f,
-            0,
-            1.0f);
-    }
+void DrawViewportOverlay(
+    ImDrawList* drawList,
+    const ImVec2& canvasMin,
+    const ImVec2& canvasMax,
+    const FrameVisualState& frameState)
+{
+    const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const Palette& schematicPalette = rhv::ui::GetPalette(ThemeMode::SchematicTelemetry);
+    const float flicker = 0.92f + (0.08f * std::sin(static_cast<float>(frameState.uptimeSeconds) * 2.2f));
 
     drawList->AddText(
-        ImVec2(labelMin.x + 8.0f, labelMin.y + 6.0f),
-        rhv::ui::ToU32(color),
-        observerTag.c_str());
-
-    const char* motionLabel = rhv::core::UsesAcceleratedMotion(observer)
-        ? "ACCEL TOY / SNAP"
-        : "INERTIAL / SNAP";
+        ImVec2(canvasMin.x + 10.0f, canvasMin.y + 8.0f),
+        rhv::ui::ToU32(terminalPalette.headerText, flicker),
+        "TOY BH REGION / OBSERVER SNAP");
     drawList->AddText(
-        ImVec2(labelMin.x + 8.0f, labelMin.y + 22.0f),
-        rhv::ui::ToU32(rhv::ui::GetPalette(ThemeMode::TerminalBase).structuralText),
-        motionLabel);
+        ImVec2(canvasMin.x + 10.0f, canvasMin.y + 24.0f),
+        rhv::ui::ToU32(schematicPalette.accentPrimary, 0.92f),
+        "HORIZON SHELL IS A TEACHING CONSTRUCT");
+    drawList->AddText(
+        ImVec2(canvasMax.x - 230.0f, canvasMax.y - 18.0f),
+        rhv::ui::ToU32(terminalPalette.structuralText, 0.84f),
+        "LMB LOCK / RMB ORBIT / WHEEL RANGE");
 }
 
 std::vector<ObserverMarker> BuildObserverMarkers(
     const MinkowskiDiagramScene& scene,
     const float snapshotCoordinateTime)
 {
-    const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
     std::vector<ObserverMarker> markers;
     markers.reserve(scene.observers.size());
 
     for (std::size_t index = 0; index < scene.observers.size(); ++index)
     {
         const ObserverWorldline& observer = scene.observers[index];
-        const float x = static_cast<float>(rhv::core::ComputeObserverPosition(observer, snapshotCoordinateTime));
+        const float xPosition = static_cast<float>(
+            rhv::core::ComputeObserverPosition(observer, static_cast<double>(snapshotCoordinateTime)));
         const bool usesAcceleration = rhv::core::UsesAcceleratedMotion(observer);
+        const float height = usesAcceleration ? 1.55f : 1.20f;
+        const float zOffset = usesAcceleration ? -0.80f : (index == 0U ? 0.70f : (index == 1U ? 0.0f : -0.70f));
+
         markers.push_back(ObserverMarker{
             static_cast<int>(index),
-            Vec3{x, 0.0f, 0.0f},
-            Vec3{x, usesAcceleration ? 1.15f : 0.92f, 0.0f},
-            ResolveObserverColor(palette, observer.tone),
-            usesAcceleration,
-            false,
-            false,
-            ImVec2{},
-            ImVec2{},
-            usesAcceleration ? 8.5f : 7.2f});
+            Vec3{xPosition, 0.0f, zOffset},
+            Vec3{xPosition, height, zOffset},
+            ResolveObserverColor(terminalPalette, observer.tone),
+            usesAcceleration});
     }
 
     return markers;
 }
 
-void DrawBackground(
-    ImDrawList* drawList,
-    const ImVec2& canvasOrigin,
-    const ImVec2& canvasSize)
+void UpdateMarkerProjectionAndPicking(
+    std::vector<ObserverMarker>& markers,
+    SpatialViewState& viewState,
+    SpatialViewportRenderResult& result,
+    const Mat4& viewProjection,
+    const ImVec2& canvasMin,
+    const ImVec2& canvasMax)
 {
-    const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
-    const ImVec2 canvasMax(canvasOrigin.x + canvasSize.x, canvasOrigin.y + canvasSize.y);
+    viewState.hoveredObserverIndex = -1;
+    result.hoveredObserverIndex = -1;
 
-    drawList->AddRectFilled(
-        canvasOrigin,
-        canvasMax,
-        rhv::ui::ToU32(palette.viewportBackground, 0.96f));
-    drawList->AddRectFilledMultiColor(
-        canvasOrigin,
-        canvasMax,
-        rhv::ui::ToU32(palette.warningText, 0.03f),
-        rhv::ui::ToU32(palette.viewportBackground, 0.00f),
-        rhv::ui::ToU32(palette.viewportBackground, 0.00f),
-        rhv::ui::ToU32(palette.activeText, 0.03f));
-    drawList->AddRect(
-        canvasOrigin,
-        canvasMax,
-        rhv::ui::ToU32(palette.panelBorder, 0.85f),
-        0.0f,
-        0,
-        1.0f);
-    drawList->AddRect(
-        ImVec2(canvasOrigin.x + 3.0f, canvasOrigin.y + 3.0f),
-        ImVec2(canvasMax.x - 3.0f, canvasMax.y - 3.0f),
-        rhv::ui::ToU32(palette.activeText, 0.20f),
-        0.0f,
-        0,
-        1.0f);
+    if (markers.empty())
+    {
+        return;
+    }
+
+    ImGuiIO& io = ImGui::GetIO();
+    float bestDistanceSquared = 1.0e9f;
+
+    for (ObserverMarker& marker : markers)
+    {
+        marker.isBaseProjected = ProjectToScreen(marker.basePosition, viewProjection, canvasMin, canvasMax, marker.baseScreen);
+        marker.isProjected = ProjectToScreen(marker.headPosition, viewProjection, canvasMin, canvasMax, marker.screenPosition);
+        if (!marker.isProjected)
+        {
+            continue;
+        }
+
+        marker.screenRadius = marker.usesAcceleration ? 8.5f : 7.0f;
+        if (!result.isHovered)
+        {
+            continue;
+        }
+
+        const float dx = io.MousePos.x - marker.screenPosition.x;
+        const float dy = io.MousePos.y - marker.screenPosition.y;
+        const float distanceSquared = (dx * dx) + (dy * dy);
+        const float pickRadius = marker.screenRadius + 8.0f;
+        if (distanceSquared <= (pickRadius * pickRadius) && distanceSquared < bestDistanceSquared)
+        {
+            bestDistanceSquared = distanceSquared;
+            viewState.hoveredObserverIndex = marker.observerIndex;
+            result.hoveredObserverIndex = marker.observerIndex;
+        }
+    }
+
+    if (result.isHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+    {
+        if (viewState.hoveredObserverIndex >= 0)
+        {
+            viewState.lockedObserverIndex = viewState.hoveredObserverIndex;
+        }
+        else
+        {
+            viewState.lockedObserverIndex = -1;
+        }
+    }
 }
 
-void DrawViewportOverlay(
-    ImDrawList* drawList,
-    const ImVec2& canvasOrigin,
-    const ImVec2& canvasSize,
-    const SpatialViewportRenderResult& result)
+void UpdateDisplayTarget(
+    const std::vector<ObserverMarker>& markers,
+    const ToyBlackHoleRegionModel& regionModel,
+    const int causalSelectedObserverIndex,
+    SpatialViewState& viewState,
+    SpatialViewportRenderResult& result)
 {
-    const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
-    const ImVec2 canvasMax(canvasOrigin.x + canvasSize.x, canvasOrigin.y + canvasSize.y);
+    int displayObserverIndex = causalSelectedObserverIndex;
+    if (viewState.lockedObserverIndex >= 0)
+    {
+        displayObserverIndex = viewState.lockedObserverIndex;
+        result.isInspectorLocked = true;
+    }
+    else if (viewState.hoveredObserverIndex >= 0)
+    {
+        displayObserverIndex = viewState.hoveredObserverIndex;
+    }
 
-    drawList->AddText(
-        ImVec2(canvasOrigin.x + 12.0f, canvasOrigin.y + 10.0f),
-        rhv::ui::ToU32(palette.headerText),
-        "OBSERVER SNAPSHOT / EMISSIVE GRID");
-    drawList->AddText(
-        ImVec2(canvasOrigin.x + 12.0f, canvasOrigin.y + 26.0f),
-        rhv::ui::ToU32(palette.structuralText),
-        "SPATIAL SNAP / TOY PLACEMENT VIEW");
+    displayObserverIndex = std::clamp(displayObserverIndex, 0, static_cast<int>(markers.size() - 1U));
+    result.displayObserverIndex = displayObserverIndex;
 
-    const char* controlLabel = result.isHovered
-        ? (result.isOrbiting ? "LMB LOCK / RMB ORBITING / WHEEL RANGE" : "LMB LOCK / RMB ORBIT / WHEEL RANGE")
-        : "LMB LOCK / RMB ORBIT / WHEEL RANGE";
-    const ImVec2 controlSize = ImGui::CalcTextSize(controlLabel);
-    drawList->AddText(
-        ImVec2(canvasMax.x - controlSize.x - 12.0f, canvasMax.y - 20.0f),
-        rhv::ui::ToU32(palette.mutedText),
-        controlLabel);
+    const ObserverMarker& displayMarker = markers[static_cast<std::size_t>(displayObserverIndex)];
+    result.displayObserverRadius = rhv::core::ComputeDistanceToRegionCenter(
+        regionModel,
+        displayMarker.headPosition.x,
+        displayMarker.headPosition.y,
+        displayMarker.headPosition.z);
+    result.displayObserverRelation =
+        rhv::core::ClassifySpatialRadius(regionModel, result.displayObserverRadius);
 }
 
-void DrawReferenceScene(
-    const FrameVisualState& frameState,
-    const ImVec2& canvasOrigin,
-    const ImVec2& canvasSize,
-    const Mat4& viewProjection)
+void DrawSceneSegments(
+    ImDrawList* drawList,
+    const std::vector<Segment3D>& segments,
+    const Mat4& viewProjection,
+    const ImVec2& canvasMin,
+    const ImVec2& canvasMax)
 {
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    for (const Segment3D& segment : BuildReferenceScene(frameState))
+    for (const Segment3D& segment : segments)
     {
         ImVec2 startScreen{};
         ImVec2 endScreen{};
-        if (!ProjectToScreen(viewProjection, segment.start, canvasOrigin, canvasSize, startScreen) ||
-            !ProjectToScreen(viewProjection, segment.end, canvasOrigin, canvasSize, endScreen))
+        if (!ProjectToScreen(segment.start, viewProjection, canvasMin, canvasMax, startScreen) ||
+            !ProjectToScreen(segment.end, viewProjection, canvasMin, canvasMax, endScreen))
         {
             continue;
         }
@@ -632,69 +712,17 @@ void DrawReferenceScene(
     }
 }
 
-void UpdateMarkerProjectionAndPicking(
-    std::vector<ObserverMarker>& markers,
-    SpatialViewState& viewState,
-    SpatialViewportRenderResult& result,
-    const Mat4& viewProjection,
-    const ImVec2& canvasOrigin,
-    const ImVec2& canvasSize)
-{
-    viewState.hoveredObserverIndex = -1;
-    float bestDistanceSquared = 999999.0f;
-    const ImVec2 mousePosition = ImGui::GetIO().MousePos;
-
-    for (ObserverMarker& marker : markers)
-    {
-        marker.isBaseProjected = ProjectToScreen(
-            viewProjection,
-            marker.basePosition,
-            canvasOrigin,
-            canvasSize,
-            marker.baseScreen);
-        marker.isProjected = ProjectToScreen(
-            viewProjection,
-            marker.headPosition,
-            canvasOrigin,
-            canvasSize,
-            marker.screenPosition);
-
-        if (!marker.isProjected)
-        {
-            continue;
-        }
-
-        const float dx = mousePosition.x - marker.screenPosition.x;
-        const float dy = mousePosition.y - marker.screenPosition.y;
-        const float distanceSquared = (dx * dx) + (dy * dy);
-        const float pickRadius = marker.screenRadius + 8.0f;
-        if (result.isHovered && distanceSquared <= (pickRadius * pickRadius) && distanceSquared < bestDistanceSquared)
-        {
-            bestDistanceSquared = distanceSquared;
-            viewState.hoveredObserverIndex = marker.observerIndex;
-        }
-    }
-
-    if (result.isHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && viewState.hoveredObserverIndex >= 0)
-    {
-        viewState.lockedObserverIndex =
-            viewState.lockedObserverIndex == viewState.hoveredObserverIndex ? -1 : viewState.hoveredObserverIndex;
-    }
-
-    result.hoveredObserverIndex = viewState.hoveredObserverIndex;
-}
-
 void DrawObserverMarkers(
-    const MinkowskiDiagramScene& scene,
+    ImDrawList* drawList,
     const std::vector<ObserverMarker>& markers,
+    const MinkowskiDiagramScene& scene,
     const int causalSelectedObserverIndex,
-    const int displayObserverIndex,
-    const int lockedObserverIndex,
-    const ImVec2& canvasOrigin,
-    const ImVec2& canvasSize)
+    const SpatialViewportRenderResult& result,
+    const ImVec2& canvasMin,
+    const ImVec2& canvasMax)
 {
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    const Palette& palette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const Palette& terminalPalette = rhv::ui::GetPalette(ThemeMode::TerminalBase);
+    const Palette& schematicPalette = rhv::ui::GetPalette(ThemeMode::SchematicTelemetry);
 
     for (const ObserverMarker& marker : markers)
     {
@@ -702,131 +730,158 @@ void DrawObserverMarkers(
         {
             continue;
         }
-        const ImVec2 baseScreen = marker.isBaseProjected
-            ? marker.baseScreen
-            : ImVec2(marker.screenPosition.x, marker.screenPosition.y + 18.0f);
 
+        const bool isDisplayed = marker.observerIndex == result.displayObserverIndex;
+        const bool isHovered = marker.observerIndex == result.hoveredObserverIndex;
         const bool isCausalSelected = marker.observerIndex == causalSelectedObserverIndex;
-        const bool isDisplaySelected = marker.observerIndex == displayObserverIndex;
-        const bool isLocked = marker.observerIndex == lockedObserverIndex;
-        const float intensity = isDisplaySelected ? 1.75f : (isCausalSelected ? 1.45f : 1.18f);
-        const float radius = marker.screenRadius + (isDisplaySelected ? 1.8f : 0.0f);
+        const float emphasis = isDisplayed ? 1.35f : (isHovered ? 1.20f : 1.0f);
 
-        DrawEmissiveLine(drawList, baseScreen, marker.screenPosition, marker.color, intensity);
-        DrawEmissiveCircle(drawList, baseScreen, 8.0f, marker.color, intensity * 0.85f);
-        DrawEmissiveDot(drawList, marker.screenPosition, radius, marker.color, intensity);
-        DrawEmissiveCircle(drawList, marker.screenPosition, radius + 5.5f, marker.color, intensity * 0.75f);
-
-        drawList->AddLine(
-            ImVec2(marker.screenPosition.x - 7.0f, marker.screenPosition.y),
-            ImVec2(marker.screenPosition.x + 7.0f, marker.screenPosition.y),
-            rhv::ui::ToU32(marker.color, 0.92f),
-            1.0f);
-        drawList->AddLine(
-            ImVec2(marker.screenPosition.x, marker.screenPosition.y - 7.0f),
-            ImVec2(marker.screenPosition.x, marker.screenPosition.y + 7.0f),
-            rhv::ui::ToU32(marker.color, 0.92f),
-            1.0f);
+        if (marker.isBaseProjected)
+        {
+            DrawEmissiveLine(drawList, marker.baseScreen, marker.screenPosition, marker.color, 1.05f * emphasis);
+        }
+        DrawEmissiveDot(drawList, marker.screenPosition, marker.screenRadius * emphasis, marker.color, 1.0f * emphasis);
+        DrawEmissiveCircle(
+            drawList,
+            marker.screenPosition,
+            (marker.screenRadius + 4.0f) * emphasis,
+            isDisplayed ? schematicPalette.accentPrimary : marker.color,
+            isDisplayed ? 1.35f : 0.90f);
 
         if (isCausalSelected)
         {
-            DrawEmissiveCircle(drawList, marker.screenPosition, radius + 11.0f, palette.activeText, 1.10f);
+            DrawEmissiveCircle(drawList, marker.screenPosition, marker.screenRadius + 10.0f, terminalPalette.activeText, 0.92f);
         }
 
-        drawList->AddText(
-            ImVec2(marker.screenPosition.x + 10.0f, marker.screenPosition.y - 8.0f),
-            rhv::ui::ToU32(marker.color, 0.92f),
-            MakeObserverTag(scene.observers[static_cast<std::size_t>(marker.observerIndex)]).c_str());
-
-        if (isDisplaySelected)
+        if (!isDisplayed)
         {
-            DrawObserverCallout(
-                drawList,
-                marker.screenPosition,
-                canvasOrigin,
-                canvasSize,
-                scene.observers[static_cast<std::size_t>(marker.observerIndex)],
-                marker.color,
-                isLocked);
+            continue;
         }
+
+        const ObserverWorldline& observer = scene.observers[static_cast<std::size_t>(marker.observerIndex)];
+        const ImVec2 labelAnchor(
+            std::clamp(marker.screenPosition.x + 20.0f, canvasMin.x + 16.0f, canvasMax.x - 150.0f),
+            std::clamp(marker.screenPosition.y - 34.0f, canvasMin.y + 22.0f, canvasMax.y - 40.0f));
+        const ImVec2 labelMax(labelAnchor.x + 138.0f, labelAnchor.y + 32.0f);
+
+        DrawEmissiveLine(
+            drawList,
+            marker.screenPosition,
+            ImVec2(labelAnchor.x, labelAnchor.y + 16.0f),
+            marker.color,
+            0.92f);
+        drawList->AddRectFilled(labelAnchor, labelMax, rhv::ui::ToU32(ImVec4(0.0f, 0.0f, 0.0f, 0.82f)));
+        drawList->AddRect(labelAnchor, labelMax, rhv::ui::ToU32(marker.color, 0.96f), 0.0f, 0, 1.1f);
+        drawList->AddText(ImVec2(labelAnchor.x + 8.0f, labelAnchor.y + 5.0f), rhv::ui::ToU32(marker.color, 0.98f), MakeObserverTag(observer).c_str());
+        drawList->AddText(
+            ImVec2(labelAnchor.x + 8.0f, labelAnchor.y + 18.0f),
+            rhv::ui::ToU32(terminalPalette.structuralText, 0.88f),
+            marker.usesAcceleration ? "ACCEL PROXY / SNAP LOCK" : "INERTIAL PROXY / SNAP LOCK");
     }
-}
-
-void UpdateDisplayTarget(
-    const MinkowskiDiagramScene& scene,
-    const std::size_t causalSelectedObserverIndex,
-    const SpatialViewState& viewState,
-    SpatialViewportRenderResult& result)
-{
-    const int observerCount = static_cast<int>(scene.observers.size());
-    const int causalIndex = static_cast<int>(std::min(causalSelectedObserverIndex, scene.observers.size() - 1U));
-    const int lockedIndex =
-        viewState.lockedObserverIndex >= 0 && viewState.lockedObserverIndex < observerCount
-        ? viewState.lockedObserverIndex
-        : -1;
-    const int hoveredIndex =
-        viewState.hoveredObserverIndex >= 0 && viewState.hoveredObserverIndex < observerCount
-        ? viewState.hoveredObserverIndex
-        : -1;
-
-    result.isInspectorLocked = lockedIndex >= 0;
-    result.displayObserverIndex = lockedIndex >= 0 ? lockedIndex : (hoveredIndex >= 0 ? hoveredIndex : causalIndex);
 }
 }  // namespace
 
 namespace rhv::render3d
 {
 SpatialViewportRenderResult DrawSpatialViewport(
-    const FrameVisualState& frameState,
-    const MinkowskiDiagramScene& scene,
+    const models::FrameVisualState& frameState,
+    const models::MinkowskiDiagramScene& scene,
+    const models::ToyBlackHoleRegionModel& regionModel,
     const std::size_t causalSelectedObserverIndex,
-    SpatialViewState& viewState,
+    models::SpatialViewState& viewState,
     const ImVec2& canvasSize,
     const char* widgetId)
 {
-    SpatialViewportRenderResult result{};
-    const float width = std::max(canvasSize.x, 64.0f);
-    const float height = std::max(canvasSize.y, 64.0f);
-    result.viewportAspectRatio = width / height;
-    result.snapshotCoordinateTime = static_cast<float>(scene.properTimeWindow.coordinateTimeStart);
-
     InitializeViewState(viewState);
 
-    const ImVec2 canvasOrigin = ImGui::GetCursorScreenPos();
-    ImGui::InvisibleButton(
-        widgetId,
-        ImVec2(width, height),
-        ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight | ImGuiButtonFlags_MouseButtonMiddle);
+    SpatialViewportRenderResult result{};
+    result.snapshotCoordinateTime = static_cast<float>(scene.properTimeWindow.coordinateTimeStart);
 
+    ImGui::PushID(widgetId);
+    ImGui::InvisibleButton(widgetId, canvasSize, ImGuiButtonFlags_MouseButtonLeft | ImGuiButtonFlags_MouseButtonRight);
+    const bool isVisible = ImGui::IsItemVisible();
     result.isHovered = ImGui::IsItemHovered();
-    UpdateCameraControls(viewState, result);
+
+    const ImVec2 canvasMin = ImGui::GetItemRectMin();
+    const ImVec2 canvasMax = ImGui::GetItemRectMax();
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+    DrawBackground(drawList, canvasMin, canvasMax, frameState);
+
+    if (isVisible)
+    {
+        UpdateCameraControls(viewState, result);
+
+        const float width = std::max(1.0f, canvasMax.x - canvasMin.x);
+        const float height = std::max(1.0f, canvasMax.y - canvasMin.y);
+        result.viewportAspectRatio = width / height;
+
+        const Vec3 cameraPosition = ComputeCameraPosition(viewState);
+        const Vec3 target{viewState.targetX, viewState.targetY, viewState.targetZ};
+        const Mat4 projection = MakePerspective(58.0f * (kPi / 180.0f), result.viewportAspectRatio, 0.1f, 64.0f);
+        const Mat4 view = MakeLookAt(cameraPosition, target, Vec3{0.0f, 1.0f, 0.0f});
+        const Mat4 viewProjection = Multiply(projection, view);
+
+        const std::vector<Segment3D> segments = BuildSceneSegments(frameState, regionModel);
+        DrawSceneSegments(drawList, segments, viewProjection, canvasMin, canvasMax);
+
+        std::vector<ObserverMarker> markers = BuildObserverMarkers(scene, result.snapshotCoordinateTime);
+        UpdateMarkerProjectionAndPicking(markers, viewState, result, viewProjection, canvasMin, canvasMax);
+        UpdateDisplayTarget(markers, regionModel, static_cast<int>(causalSelectedObserverIndex), viewState, result);
+        DrawObserverMarkers(
+            drawList,
+            markers,
+            scene,
+            static_cast<int>(causalSelectedObserverIndex),
+            result,
+            canvasMin,
+            canvasMax);
+
+        ImVec2 horizonAnchor{};
+        if (ProjectToScreen(
+                Vec3{regionModel.centerX + regionModel.horizonRadius, regionModel.centerY, regionModel.centerZ},
+                viewProjection,
+                canvasMin,
+                canvasMax,
+                horizonAnchor))
+        {
+            DrawRegionCallout(
+                drawList,
+                horizonAnchor,
+                canvasMin,
+                canvasMax,
+                "TOY HORIZON SHELL",
+                "PEDAGOGICAL REGION ONLY",
+                rhv::ui::GetPalette(ThemeMode::TerminalBase).activeText,
+                52.0f);
+        }
+
+        ImVec2 cautionAnchor{};
+        if (ProjectToScreen(
+                Vec3{regionModel.centerX, regionModel.centerY, regionModel.centerZ + regionModel.cautionRadius},
+                viewProjection,
+                canvasMin,
+                canvasMax,
+                cautionAnchor))
+        {
+            DrawRegionCallout(
+                drawList,
+                cautionAnchor,
+                canvasMin,
+                canvasMax,
+                "CAUTION BAND",
+                "HAZARDOUS TOY ZONE",
+                rhv::ui::GetPalette(ThemeMode::TerminalBase).warningText,
+                104.0f);
+        }
+
+        DrawViewportOverlay(drawList, canvasMin, canvasMax, frameState);
+    }
+
     result.yawDegrees = viewState.yawRadians * (180.0f / kPi);
     result.pitchDegrees = viewState.pitchRadians * (180.0f / kPi);
     result.cameraDistance = viewState.distance;
-
-    const Vec3 target{viewState.targetX, viewState.targetY, viewState.targetZ};
-    const Vec3 eye = ComputeCameraPosition(viewState);
-    const Mat4 view = MakeLookAt(eye, target, Vec3{0.0f, 1.0f, 0.0f});
-    const Mat4 projection = MakePerspective(50.0f * (kPi / 180.0f), width / height, 0.1f, 64.0f);
-    const Mat4 viewProjection = Multiply(projection, view);
-
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-    DrawBackground(drawList, canvasOrigin, ImVec2(width, height));
-    DrawReferenceScene(frameState, canvasOrigin, ImVec2(width, height), viewProjection);
-
-    std::vector<ObserverMarker> markers = BuildObserverMarkers(scene, result.snapshotCoordinateTime);
-    UpdateMarkerProjectionAndPicking(markers, viewState, result, viewProjection, canvasOrigin, ImVec2(width, height));
-    UpdateDisplayTarget(scene, causalSelectedObserverIndex, viewState, result);
-    DrawObserverMarkers(
-        scene,
-        markers,
-        static_cast<int>(std::min(causalSelectedObserverIndex, scene.observers.size() - 1U)),
-        result.displayObserverIndex,
-        viewState.lockedObserverIndex,
-        canvasOrigin,
-        ImVec2(width, height));
-    DrawViewportOverlay(drawList, canvasOrigin, ImVec2(width, height), result);
-
+    ImGui::PopID();
     return result;
 }
 

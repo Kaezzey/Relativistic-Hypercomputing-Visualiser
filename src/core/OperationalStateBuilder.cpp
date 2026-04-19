@@ -220,42 +220,42 @@ models::OperationalState BuildOperationalState(
             ? "BOOT TRANSIENT / TELEMETRY PARTIAL"
             : (selectedObserverUsesAcceleration
                 ? "PEDAGOGICAL ACCEL / HORIZON GUIDE ACTIVE"
-                : "TOY MODEL / 2D CAUSAL + 3D SNAPSHOT"));
+                : "TOY MODEL / 2D CAUSAL + 3D BH REGION"));
     state.commandLine = !isDisplayFocused
         ? "CMD > INPUT HOLD / OPERATOR AWAY"
         : (isBootTransient
             ? "CMD > WAIT / DISPLAY BUS ARMING"
             : (selectedObserverUsesAcceleration
-                ? "CMD > CAUSAL LMB SELECT / SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE / TRACE ACCEL HORIZON"
-                : "CMD > CAUSAL LMB SELECT / SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE / TRACE NULL TX"));
+                ? "CMD > CAUSAL LMB SELECT / SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE / TRACE ACCEL HORIZON / QUERY REGION"
+                : "CMD > CAUSAL LMB SELECT / SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE / TRACE NULL TX / QUERY REGION"));
     state.commandState = !isDisplayFocused
         ? "CMD BUS PARKED"
         : (selectedObserverUsesAcceleration
-            ? "ACCEL GUIDE LIVE / 3D CAMERA ONLINE"
-            : "NULL TX LIVE / 3D CAMERA ONLINE");
+            ? "ACCEL GUIDE LIVE / 3D REGION ONLINE"
+            : "NULL TX LIVE / 3D REGION ONLINE");
     state.activeScreen = "HYBRID ANALYSIS";
     state.modelState = selectedObserverUsesAcceleration
         ? "FLAT SPACETIME / ACCEL TOY / RINDLER GUIDE / C = 1"
         : "FLAT SPACETIME / INERTIAL WORLDLINES / C = 1 / NULL TX LIVE";
     state.viewLinkState = !isDisplayFocused
         ? "SYNC DEGRADED / STANDBY"
-        : (isBootTransient ? "SYNC ACQUIRING" : "2D ACTIVE / 3D SNAPSHOT LIVE");
+        : (isBootTransient ? "SYNC ACQUIRING" : "2D ACTIVE / 3D REGION LIVE");
     state.causalViewMode = selectedObserverUsesAcceleration
         ? "MINKOWSKI MAP / ACCEL TRACE + SIGNALS"
         : "MINKOWSKI MAP / WORLDLINES + SIGNALS";
     state.causalStatus = selectedObserverUsesAcceleration
         ? "HORIZON GUIDE ACTIVE / CAUSAL ACCESS SHIFTING"
         : "NULL TX ONLINE / LINK QUERY ACTIVE";
-    state.spatialViewMode = "SPATIAL SNAPSHOT / OBSERVER MARKERS";
-    state.spatialStatus = "PLACEMENT ONLINE / EMISSIVE WIREFRAME";
-    state.lensState = "OPTICAL MODE OFFLINE / NO LENS MODEL";
+    state.spatialViewMode = "TOY BH REGION / OBSERVER SNAPSHOT";
+    state.spatialStatus = "HORIZON SHELL ONLINE / REGION MAP ACTIVE";
+    state.lensState = "OPTICAL MODE OFFLINE / LENS STAGE PENDING";
 
     state.commandBadges = {
         StatusBadge{bootPhase.phase, bootPhase.tone, false},
         StatusBadge{state.activeScreen, Tone::Active, false},
         StatusBadge{selectedObserver.observerId, ResolveObserverSelectionTone(selectedObserver), false},
         StatusBadge{
-            selectedObserverUsesAcceleration ? "ACCEL GUIDE" : "NULL TX LIVE",
+            "BH REGION",
             Tone::Warning,
             false},
     };
@@ -316,7 +316,7 @@ models::OperationalState BuildOperationalState(
             signalReport.validObserverLinkCount > 0 ? Tone::Active : Tone::Warning},
         EventLogEntry{
             "CTL-06",
-            "CAUSAL LMB SELECT. SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE. DISPLAY SIZE " +
+            "CAUSAL LMB SELECT. SPATIAL LMB LOCK / RMB ORBIT / WHEEL RANGE. QUERY REGION SHELLS. DISPLAY SIZE " +
                 std::to_string(telemetry.framebufferWidth) + " X " +
                 std::to_string(telemetry.framebufferHeight) + ".",
             Tone::Muted},
@@ -340,8 +340,8 @@ models::OperationalState BuildOperationalState(
     if (!isBootTransient)
     {
         state.eventLog[0].message = selectedObserverUsesAcceleration
-            ? "BOOT PHASE STABLE. ACCELERATION DEMO SCENE AND 3D OBSERVER SNAPSHOT ONLINE."
-            : "BOOT PHASE STABLE. WORLDLINE SIGNAL DEMO SCENE AND 3D OBSERVER SNAPSHOT ONLINE.";
+            ? "BOOT PHASE STABLE. ACCELERATION DEMO SCENE AND 3D TOY BH REGION OVERVIEW ONLINE."
+            : "BOOT PHASE STABLE. WORLDLINE SIGNAL DEMO SCENE AND 3D TOY BH REGION OVERVIEW ONLINE.";
     }
 
     state.eventLog[5].message += " " + BuildFrameClockLabel(frameState) + ".";

@@ -5,6 +5,7 @@
 #include "core/OperationalStateBuilder.h"
 #include "core/ProperTime.h"
 #include "core/SignalPropagation.h"
+#include "core/ToyBlackHoleSpatialModel.h"
 #include "models/OperationalState.h"
 #include "models/SpatialViewState.h"
 #include "render2d/MinkowskiDiagramRenderer.h"
@@ -457,6 +458,13 @@ std::string FormatSpatialSnapshotLabel(const float coordinateTime)
     return stream.str();
 }
 
+std::string FormatSpatialRadiusLabel(const float radius)
+{
+    std::ostringstream stream;
+    stream << std::fixed << std::setprecision(2) << "R=" << radius;
+    return stream.str();
+}
+
 std::string FormatSpatialCoordinateLabel(
     const InertialObserver& observer,
     const float coordinateTime)
@@ -505,6 +513,7 @@ std::string FormatSpatialPickLabel(
 void DrawSpatialViewPanel(
     const FrameVisualState& frameState,
     const rhv::models::MinkowskiDiagramScene& scene,
+    const rhv::models::ToyBlackHoleRegionModel& regionModel,
     const std::size_t selectedObserverIndex,
     const OperationalState& operationalState,
     rhv::models::SpatialViewState& spatialViewState)
@@ -517,14 +526,15 @@ void DrawSpatialViewPanel(
 
     rhv::ui::DrawWrappedNote(
         "MODEL WARN",
-        "Spatial observer snapshot only. Placement is sampled at a fixed coordinate time and shown with emissive teaching proxies, not full worldtubes, black-hole regions, or lensing.",
+        regionModel.simplificationNote.c_str(),
         ThemeMode::TerminalBase);
 
-    const float canvasHeight = std::max(150.0f, ImGui::GetContentRegionAvail().y - 60.0f);
+    const float canvasHeight = std::max(120.0f, ImGui::GetContentRegionAvail().y - 192.0f);
     const rhv::render3d::SpatialViewportRenderResult renderResult =
         rhv::render3d::DrawSpatialViewport(
             frameState,
             scene,
+            regionModel,
             selectedObserverIndex,
             spatialViewState,
             ImVec2(ImGui::GetContentRegionAvail().x, canvasHeight),
@@ -537,9 +547,9 @@ void DrawSpatialViewPanel(
             static_cast<int>(scene.observers.size() - 1U)));
     const InertialObserver& displayObserver = scene.observers[displayObserverIndex];
 
-    rhv::ui::DrawLabelChip("OBSERVER MARKERS", terminalPalette.activeText, ThemeMode::TerminalBase);
+    rhv::ui::DrawLabelChip("REGION SHELLS", terminalPalette.warningText, ThemeMode::TerminalBase);
     ImGui::SameLine();
-    rhv::ui::DrawLabelChip("EMISSIVE GRID", terminalPalette.warningText, ThemeMode::TerminalBase);
+    rhv::ui::DrawLabelChip("OBSERVER MARKERS", terminalPalette.activeText, ThemeMode::TerminalBase);
     ImGui::SameLine();
     rhv::ui::DrawLabelChip(
         renderResult.isInspectorLocked ? "LOCAL LOCK" : "CAUSAL FEED",
@@ -577,6 +587,16 @@ void DrawSpatialViewPanel(
         "PLACEMENT",
         FormatSpatialMotionLabel(displayObserver, renderResult.snapshotCoordinateTime),
         terminalPalette.structuralText,
+        116.0f);
+    rhv::ui::DrawStatusRow(
+        "REGION REL",
+        rhv::core::ToRegionLabel(renderResult.displayObserverRelation),
+        terminalPalette.warningText,
+        116.0f);
+    rhv::ui::DrawStatusRow(
+        "REGION RAD",
+        FormatSpatialRadiusLabel(renderResult.displayObserverRadius),
+        terminalPalette.activeText,
         116.0f);
 }
 
@@ -782,6 +802,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
 
     const HybridScreenLayout layout = BuildHybridScreenLayout(viewport->Pos, viewport->Size);
     static const rhv::models::MinkowskiDiagramScene scene = rhv::core::BuildMinkowskiDemoScene();
+    static const rhv::models::ToyBlackHoleRegionModel regionModel = rhv::core::BuildToyBlackHoleRegionModel();
     static rhv::render2d::MinkowskiViewState viewState{};
     static rhv::models::SpatialViewState spatialViewState{};
     rhv::render2d::EnsureViewState(scene, viewState);
@@ -855,6 +876,7 @@ void DrawHybridScreen(const BootTelemetry& telemetry, const FrameVisualState& fr
         DrawSpatialViewPanel(
             frameState,
             scene,
+            regionModel,
             viewState.selectedObserverIndex,
             operationalState,
             spatialViewState);

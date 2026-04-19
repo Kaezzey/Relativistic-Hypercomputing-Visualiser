@@ -20,6 +20,7 @@ set(RHV_SOURCES
     src/core/OperationalStateBuilder.cpp
     src/core/ProperTime.cpp
     src/core/SignalPropagation.cpp
+    src/core/ToyBlackHoleSpatialModel.cpp
     src/render2d/MinkowskiDiagramRenderer.cpp
     src/render3d/SpatialViewportRenderer.cpp
     src/ui/BootPanel.cpp
@@ -38,11 +39,13 @@ set(RHV_HEADERS
     src/models/MinkowskiDiagramModel.h
     src/models/OperationalState.h
     src/models/SpatialViewState.h
+    src/models/ToyBlackHoleRegionModel.h
     src/core/MinkowskiDemoScene.h
     src/core/ObserverMotion.h
     src/core/OperationalStateBuilder.h
     src/core/ProperTime.h
     src/core/SignalPropagation.h
+    src/core/ToyBlackHoleSpatialModel.h
     src/render2d/MinkowskiDiagramRenderer.h
     src/render3d/SpatialViewportRenderer.h
     src/ui/BootPanel.h

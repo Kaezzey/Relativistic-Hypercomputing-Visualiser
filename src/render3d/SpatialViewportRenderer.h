@@ -3,6 +3,7 @@
 #include "models/FrameVisualState.h"
 #include "models/MinkowskiDiagramModel.h"
 #include "models/SpatialViewState.h"
+#include "models/ToyBlackHoleRegionModel.h"
 
 #include <imgui.h>
 
@@ -22,11 +23,15 @@ struct SpatialViewportRenderResult
     float cameraDistance = 0.0f;
     float viewportAspectRatio = 1.0f;
     float snapshotCoordinateTime = 0.0f;
+    float displayObserverRadius = 0.0f;
+    models::SpatialRegionRelation displayObserverRelation =
+        models::SpatialRegionRelation::OuterReference;
 };
 
 [[nodiscard]] SpatialViewportRenderResult DrawSpatialViewport(
     const models::FrameVisualState& frameState,
     const models::MinkowskiDiagramScene& scene,
+    const models::ToyBlackHoleRegionModel& regionModel,
     std::size_t causalSelectedObserverIndex,
     models::SpatialViewState& viewState,
     const ImVec2& canvasSize,
